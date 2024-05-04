@@ -1,0 +1,32 @@
+# Ignore key.json file
+key.json
+
+# Ignore Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore virtual environment directory
+venv/
+env/
+
+# Ignore IDE-specific files
+.vscode/
+.idea/
+
+# Ignore log files
+*.log
+
+# Ignore build and distribution directories
+build/
+dist/
+
+# Ignore other common files
+.DS_Store
+Thumbs.db
+
+# Ignore sensitive environment files
+.env
+.env.local
+.env.*.local

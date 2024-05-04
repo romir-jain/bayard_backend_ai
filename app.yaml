@@ -1,0 +1,11 @@
+# app.yaml
+runtime: python312
+
+handlers:
+- url: /
+  secure: always
+  redirect_http_response_code: 301
+  script: python app.py
+
+env_variables:
+  BUCKET_NAME: "bayardlab"
