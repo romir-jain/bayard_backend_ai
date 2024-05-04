@@ -18,7 +18,11 @@ CORS(app, resources={r"/api/*": {"origins": "*", "headers": ["Content-Type", "Au
 
 # Render PostgreSQL database connection
 db_connection = psycopg2.connect(
-    url="postgres://bayard_user:Q0bdCHoyQ9Zfdxa3tYG66nasUM7SgLNF@dpg-col8gja1hbls73b5gl50-a.oregon-postgres.render.com/bayard"
+    host="dpg-col8gja1hbls73b5gl50-a.oregon-postgres.render.com",
+    port="5432",
+    database="bayard",
+    user="bayard_user",
+    password=os.environ.get("DB_PASSWORD")
 )
 
 def create_table_if_not_exists():
