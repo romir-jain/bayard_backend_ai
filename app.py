@@ -10,6 +10,8 @@ from elasticsearch_utils import search_elasticsearch
 import json
 import psycopg2
 import time
+import secrets
+
 
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*", "headers": ["Content-Type", "Authorization"]}})
@@ -74,8 +76,7 @@ def handle_preflight_request():
 @app.route("/api/generate-key", methods=["GET"])
 def generate_api_key():
     # Generate a new API key
-    new_api_key = str(uuid.uuid4())
-
+    new_api_key = secrets.token_urlsafe(32)
     # Store the new API key in the database
     with db_connection.cursor() as cursor:
         cursor.execute("INSERT INTO api_keys (api_key) VALUES (%s)", (new_api_key,))
