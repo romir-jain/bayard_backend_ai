@@ -12,19 +12,12 @@ import psycopg2
 import time
 import secrets
 
-
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*", "headers": ["Content-Type", "Authorization"]}})
 
 # Render PostgreSQL database connection
-db_connection = psycopg2.connect(
-    host="dpg-col8gja1hbls73b5gl50-a.oregon-postgres.render.com",
-    port="5432",
-    database="bayard",
-    user="bayard_user",
-    password=os.environ.get("DB_PASSWORD"),
-    sslmode="require"
-)
+DATABASE_URL = "postgres://bayard_user:Q0bdCHoyQ9Zfdxa3tYG66nasUM7SgLNF@dpg-col8gja1hbls73b5gl50-a/bayard"
+db_connection = psycopg2.connect(DATABASE_URL, sslmode="require")
 
 def create_table_if_not_exists():
     with db_connection.cursor() as cursor:
