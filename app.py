@@ -22,7 +22,8 @@ db_connection = psycopg2.connect(
     port="5432",
     database="bayard",
     user="bayard_user",
-    password=os.environ.get("DB_PASSWORD")
+    password=os.environ.get("DB_PASSWORD"),
+    sslmode="require"
 )
 
 def create_table_if_not_exists():
