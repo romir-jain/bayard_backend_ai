@@ -90,13 +90,18 @@ def authenticate_request():
     if request.path == '/health-check' or request.path == '/api/generate-key':
         return
 
-    # Try to get the API key from the Authorization header
-    auth_header = request.headers.get('Authorization')
-    if auth_header and auth_header.startswith('Bearer '):
-        bayard_api_key = auth_header.split(' ')[1]
-    else:
-        # If the Authorization header is not present or invalid, try to get the API key from the environment variable
-        bayard_api_key = os.environ.get('BAYARD_API_KEY')
+    # Try to get the API key from the environment variable
+    bayard_api_key = os.environ.get('BAYARD_API_KEY')
+
+    # If the environment variable is not set, try to get the API key from the X-API-Key header
+    if not bayard_api_key:
+        bayard_api_key = request.headers.get('X-API-Key')
+
+    # If neither the environment variable nor the X-API-Key header is present, try to get the API key from the Authorization header
+    if not bayard_api_key:
+        auth_header = request.headers.get('Authorization')
+        if auth_header and auth_header.startswith('Bearer '):
+            bayard_api_key = auth_header.split(' ')[1]
 
     if not bayard_api_key:
         return jsonify({'error': 'API key not configured'}), 500
