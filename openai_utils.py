@@ -64,17 +64,8 @@ def generate_model_output(input_text, filtered_docs, max_hits=10, max_tokens=300
     )
 # The line `model_output = response['choices'][0]['message']['content']` is extracting the generated
 # response content from the OpenAI GPT-4 model's output.
-    model_output = response.choices[0].message
+    model_output = response.choices[0].message.content
     # Format the model output with markdown
-    formatted_output = f"{model_output}\n"
     
-        
-    # Append the download URLs and titles of all filtered documents to the end of the model output
-    if filtered_docs:
-        formatted_output += "## Relevant Documents\n\n"
-        for doc in filtered_docs[:max_hits]:
-            download_url = doc['downloadUrl']
-            formatted_output += f"- [{doc['title']}]({download_url})\n"
+    return model_output
 
-    print(f"Model output:\n{model_output}")
-    return formatted_output
