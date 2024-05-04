@@ -1,6 +1,8 @@
 import os
 import uuid
 import datetime
+import logging
+import time
 from flask import Flask, request, jsonify, make_response
 from flask_cors import CORS
 from google.auth import credentials
@@ -8,33 +10,53 @@ from google.oauth2 import service_account
 from openai_utils import initialize_openai, generate_model_output
 from elasticsearch_utils import search_elasticsearch
 import json
-import psycopg2
-import time
 import secrets
+from supabase import create_client, Client
 
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*", "headers": ["Content-Type", "Authorization"]}})
 
-# Render PostgreSQL database connection
-DATABASE_URL = "postgres://bayard_user:Q0bdCHoyQ9Zfdxa3tYG66nasUM7SgLNF@dpg-col8gja1hbls73b5gl50-a/bayard"
-db_connection = psycopg2.connect(DATABASE_URL, sslmode="require")
+# Supabase PostgreSQL database connection
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise ValueError("SUPABASE_URL and SUPABASE_KEY environment variables are not set")
+
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def create_table_if_not_exists():
-    with db_connection.cursor() as cursor:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS model_runs (
-                run_id VARCHAR(255) PRIMARY KEY,
-                timestamp BIGINT,
-                input_text TEXT,
-                model_output TEXT
-            );
-        """)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS api_keys (
-                api_key VARCHAR(255) PRIMARY KEY
-            );
-        """)
-    db_connection.commit()
+    model_runs_table = """
+        CREATE TABLE IF NOT EXISTS model_runs (
+            run_id VARCHAR(255) PRIMARY KEY,
+            timestamp BIGINT,
+            input_text TEXT,
+            model_output TEXT
+        );
+    """
+    supabase.postgrest.rpc("create_table", {
+        "name": "runs",
+        "columns": [
+            {"name": "run_id", "type": "VARCHAR(255)"},
+            {"name": "timestamp", "type": "BIGINT"},
+            {"name": "input_text", "type": "TEXT"},
+            {"name": "model_output", "type": "TEXT"}
+        ],
+        "primary_key": ["run_id"]
+    })
+
+    api_keys_table = """
+        CREATE TABLE IF NOT EXISTS api.keys (
+            api_key VARCHAR(255) PRIMARY KEY
+        );
+    """
+    supabase.postgrest.rpc("create_table", {
+        "name": "keys",
+        "columns": [
+            {"name": "api_key", "type": "VARCHAR(255)"}
+        ],
+        "primary_key": ["api_key"]
+    })
 
 @app.after_request
 def add_headers(response):
@@ -72,9 +94,7 @@ def generate_api_key():
     # Generate a new API key
     new_api_key = secrets.token_urlsafe(32)
     # Store the new API key in the database
-    with db_connection.cursor() as cursor:
-        cursor.execute("INSERT INTO api_keys (api_key) VALUES (%s)", (new_api_key,))
-    db_connection.commit()
+    supabase.table("keys").insert({"api_key": new_api_key}).execute()
 
     return jsonify({"api_key": new_api_key})
 
@@ -86,25 +106,29 @@ def authenticate_request():
 
     # Try to get the API key from the environment variable
     bayard_api_key = os.environ.get('BAYARD_API_KEY')
+    logging.info(f"Retrieved API key from environment variable: {bayard_api_key}")
 
     # If the environment variable is not set, try to get the API key from the X-API-Key header
     if not bayard_api_key:
         bayard_api_key = request.headers.get('X-API-Key')
+        logging.info(f"Retrieved API key from X-API-Key header: {bayard_api_key}")
 
     # If neither the environment variable nor the X-API-Key header is present, try to get the API key from the Authorization header
     if not bayard_api_key:
         auth_header = request.headers.get('Authorization')
-        if auth_header and auth_header.startswith('Bearer '):
+        if auth_header and auth_header.startswith('Bearer'):
             bayard_api_key = auth_header.split(' ')[1]
+            logging.info(f"Retrieved API key from Authorization header: {bayard_api_key}")
 
     if not bayard_api_key:
+        logging.error("API key not found in request headers or environment variable")
         return jsonify({'error': 'API key not configured'}), 500
 
     # Check if the API key exists in the database
-    with db_connection.cursor() as cursor:
-        cursor.execute("SELECT 1 FROM api_keys WHERE api_key = %s", (bayard_api_key,))
-        if not cursor.fetchone():
-            return jsonify({'error': 'Invalid API key'}), 401
+    api_key_exists = supabase.table("keys").select("api_key").ilike("api_key", bayard_api_key).execute()    
+    logging.info(f"API key exists in database: {api_key_exists.data}")
+    if not api_key_exists.data:
+        return jsonify({'error': 'Invalid API key'}), 401
 
     # Check if the rate limit has been exceeded
     if not rate_limit(bayard_api_key):
@@ -151,12 +175,12 @@ def bayard_api():
     model_output = generate_model_output(input_text, search_results or [])
 
     # Store the run in the database
-    with db_connection.cursor() as cursor:
-        cursor.execute(
-            "INSERT INTO model_runs (run_id, timestamp, input_text, model_output) VALUES (%s, %s, %s, %s)",
-            (run_id, timestamp, input_text, model_output),
-        )
-    db_connection.commit()
+    supabase.table("runs").insert({
+        "run_id": run_id,
+        "timestamp": timestamp,
+        "input_text": input_text,
+        "model_output": model_output
+    }).execute()
 
     # Prepare the response in the desired format
     response_data = {
