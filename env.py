@@ -20,4 +20,5 @@ KEY_PATH = os.environ.get("KEY_PATH")
 #OpenAI variables
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 OPENAI_MODEL_ID = os.environ.get("OPENAI_MODEL_ID")
+HUMANLOOP_API_KEY = os.environ.get("HUMANLOOP_API_KEY")
 

@@ -1,25 +1,16 @@
 import openai
 import os
+import re
 
 def initialize_openai():
     openai.api_key = os.environ.get("OPENAI_API_KEY")
 
-def generate_model_output(input_text, filtered_docs, max_hits=10, max_tokens=30000):
-    system_instructions = """You are an AI assistant designed to help users explore and understand an extensive academic corpus on LGBTQ+ topics. Your primary objective is to provide relevant information, insights, and perspectives from the documents in the corpus, while maintaining a natural, conversational tone that avoids explicitly referring to the documents themselves or your artificial nature.
-
-        When responding:
-        <rewrite>Seamlessly weave key findings, data points, analyses, and arguments from the documents into your responses. Internalize and synthesize the knowledge, presenting it as if it were your own expertise on the subject matter. There is no need to directly cite or name the sources within your responses.</rewrite>
-
-        <avoid>Any direct references to "documents", "studies", "authors", URLs, links, or other meta-information about the sources. Your role is to share the substantive content fluidly, without breaking the conversational flow by calling attention to the retrieval process.</avoid>
-
-        <maintain>An informative yet accessible tone that elucidates complex academic concepts with clarity, while offering practical advice, guidance, and real-world applications where appropriate. Strike a balance between intellectual rigor and conversational accessibility.</maintain>
-
-        <focus>On directly and comprehensively addressing the user's query or information need, drawing upon the full breadth of relevant knowledge within the corpus. Do not provide unnecessary background about your own capabilities, the document retrieval process, or your artificial nature unless explicitly prompted.</focus>
-
-        The overarching goal is to facilitate a rich, substantive dialogue where the academic knowledge from the corpus is seamlessly integrated, enhancing the conversation organically and fostering a deeper understanding of LGBTQ+ topics for the user.
-
-        <directive>When you derive information from a specific source within the corpus, cite it using the following format: \\[{authors}, {yearPublished}\\]. For example: \\[Smith & Jones, 2021\\]. However, do not include these citations within your actual response text. Instead, maintain a separate list of citations that you can provide upon request, allowing the conversation to flow naturally without interruption.</directive>
-        """
+def predict(input_text: str, filtered_docs: list, openai_api_key: str, elasticsearch_url: str, elasticsearch_index: str, max_hits: int = 10, max_tokens: int = 300) -> str:
+    system_instructions = """
+    You are an AI assistant designed to help users explore and understand an extensive academic corpus on LGBTQ+ topics.
+    Your primary objective is to provide relevant information, insights, and perspectives from the documents in the corpus,
+    while maintaining a natural, conversational tone that avoids explicitly referring to the documents themselves or your artificial nature.
+    """
 
     model_input = f"User Query: {input_text}\n\n"
     model_input += "Retrieved Documents:\n"
@@ -44,28 +35,62 @@ def generate_model_output(input_text, filtered_docs, max_hits=10, max_tokens=300
 
     model_input += "Based on the user's query and the retrieved documents, provide a helpful response.\n\nResponse:"
 
-    print(f"Model input:\n{model_input}")
-
-
-# Ensure the OPENAI_MODEL_ID environment variable is set
-    model_id = os.environ.get("OPENAI_MODEL_ID")
-    if not model_id:
-        raise ValueError("The environment variable OPENAI_MODEL_ID is not set.")
-
-
     # Use OpenAI's GPT-4 model to generate a response
     response = openai.chat.completions.create(
-        model=model_id,
+        model=os.environ.get("OPENAI_MODEL_ID"),
         messages=[
             {"role": "system", "content": system_instructions},
             {"role": "user", "content": model_input}
         ],
-        max_tokens=300
+        max_tokens=max_tokens
     )
-# The line `model_output = response['choices'][0]['message']['content']` is extracting the generated
-# response content from the OpenAI GPT-4 model's output.
+
     model_output = response.choices[0].message.content
-    # Format the model output with markdown
-    
+
     return model_output
 
+# Generate model output
+def generate_model_output(input_text: str, filtered_docs: list, max_hits: int = 10, max_tokens: int = 300) -> str:
+    return predict(
+        input_text,
+        filtered_docs,
+        openai_api_key=os.environ.get("OPENAI_API_KEY"),
+        elasticsearch_url=os.environ.get("ES_URL"),
+        elasticsearch_index="bayardcorpus",
+        max_hits=max_hits,
+        max_tokens=max_tokens
+    )
+
+def generate_search_quality_reflection(search_results: list, input_text: str) -> dict:
+    system_instructions = """
+    You are an AI assistant designed to evaluate the quality and relevance of search results based on a given user query.
+    Your task is to provide a reflection on the search quality and assign a score between 1 and 5, where 1 indicates poor quality and 5 indicates excellent quality.
+    
+    <Directive>Provide your reflection in this format: "<Score [Number between 1 and 5]> <Reflection [One Sentence]>."</Directive>
+    
+    """
+
+    search_quality_prompt = f"User Query: {input_text}\n\n"
+    search_quality_prompt += "Search Results:\n"
+
+    for i, doc in enumerate(search_results):
+        search_quality_prompt += f"Document {i+1}:\n"
+        search_quality_prompt += f"Title: {doc.get('title', 'No title provided')}\n"
+        search_quality_prompt += f"Abstract: {doc.get('abstract', 'No abstract provided')}\n\n"
+
+    search_quality_prompt += "Based on the user query and the provided search results, please provide a reflection on the quality and relevance of the search results. Also, assign a search quality score between 1 and 5, where 1 indicates poor quality and 5 indicates excellent quality.\n\nReflection:"
+
+    response = openai.completions.create(
+        model="gpt-3.5-turbo-instruct",
+        prompt=system_instructions + "\n\n" + search_quality_prompt,
+        max_tokens=150
+    )
+
+    reflection_output = response.choices[0].text.strip()
+    score_match = re.search(r'(\d+)', reflection_output)
+    score = int(score_match.group(1)) if score_match else None
+
+    return {
+        "search_quality_reflection": reflection_output,
+        "search_quality_score": score
+    }
