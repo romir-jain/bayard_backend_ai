@@ -92,7 +92,84 @@ def handle_preflight_request():
     response.headers.add("Access-Control-Allow-Headers", "Content-Type, Authorization")
     return response
 
-@app.route("/api/bayard", methods=["POST"])
+@app.route("/api/generate-key", methods=["GET"])
+def generate_api_key():
+    try:
+        # Generate a new API key
+        new_api_key = secrets.token_urlsafe(32)
+        # Store the new API key in the database
+        data = supabase.table("keys").insert({"api_key": new_api_key}).execute()
+
+        # Check if the insertion was successful
+        if data:
+            return jsonify({"api_key": new_api_key}), 200
+        else:
+            raise Exception("Failed to store API key in the database")
+    except Exception as e:
+        logging.error(f"Failed to generate API key: {str(e)}")
+        return jsonify({"error": "Failed to generate API key"}), 500
+
+@app.before_request
+def authenticate_request():
+    # Check if the request is for the health check or API key generation endpoint
+    if request.path == '/health-check' or request.path == '/api/generate-key':
+        return
+
+    # Try to get the API key from the environment variable
+    bayard_api_key = os.environ.get('BAYARD_API_KEY')
+    logging.info(f"Retrieved API key from environment variable: {bayard_api_key}")
+
+    # If the environment variable is not set, try to get the API key from the X-API-Key header
+    if not bayard_api_key:
+        bayard_api_key = request.headers.get('X-API-Key')
+        logging.info(f"Retrieved API key from X-API-Key header: {bayard_api_key}")
+
+    # If neither the environment variable nor the X-API-Key header is present, try to get the API key from the Authorization header
+    if not bayard_api_key:
+        auth_header = request.headers.get('Authorization')
+        if auth_header and auth_header.startswith('Bearer'):
+            bayard_api_key = auth_header.split(' ')[1]
+            logging.info(f"Retrieved API key from Authorization header: {bayard_api_key}")
+
+    if not bayard_api_key:
+        logging.error("API key not found in request headers or environment variable")
+        return jsonify({'error': 'API key not configured'}), 500
+
+    # Check if the API key exists in the database
+    api_key_exists = supabase.table("keys").select("api_key").ilike("api_key", bayard_api_key).execute()    
+    logging.info(f"API key exists in database: {api_key_exists.data}")
+    if not api_key_exists.data:
+        return jsonify({'error': 'Invalid API key'}), 401
+
+    # Check if the rate limit has been exceeded
+    if not rate_limit(bayard_api_key):
+        return jsonify({'error': 'Rate limit exceeded'}), 429
+
+# Dictionary to store API key usage
+api_key_usage = {}
+
+# Rate limiting configuration
+RATE_LIMIT_QUERIES = 500
+RATE_LIMIT_PERIOD = 3600  # 1 hour in seconds
+
+def rate_limit(api_key):
+    current_time = datetime.datetime.now()
+    usage_history = api_key_usage.get(api_key, [])
+
+    # Remove expired entries from the usage history
+    usage_history = [entry for entry in usage_history if (current_time - entry).total_seconds() < RATE_LIMIT_PERIOD]
+    api_key_usage[api_key] = usage_history
+
+    # Check if the rate limit has been exceeded
+    if len(usage_history) >= RATE_LIMIT_QUERIES:
+        return False
+
+    # Add the current request to the usage history
+    usage_history.append(current_time)
+    api_key_usage[api_key] = usage_history
+
+    return True
+
 @app.route("/api/bayard", methods=["POST"])
 def bayard_api():
     input_text = request.json.get("input_text")
