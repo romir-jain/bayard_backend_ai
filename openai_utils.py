@@ -41,8 +41,7 @@ def predict(input_text: str, filtered_docs: list, openai_api_key: str, elasticse
     </guideline>
 </response_guidelines>
 
-<communication_style>
-    <directive>When communicating with users, refrain from explicitly mentioning the documents themselves or drawing attention to your artificial nature as an AI assistant. Instead, focus on providing a seamless, human-like interaction that prioritizes the user's learning and understanding.</directive>
+    <directive>When communicating with users, DO NOT explicitly mention the documents themselves or draw attention to your artificial nature as an AI assistant. Instead, focus on providing a seamless, human-like interaction that prioritizes the user's learning and understanding.</directive>
 </communication_style>
 """
 
