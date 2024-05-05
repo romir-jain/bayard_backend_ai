@@ -146,4 +146,4 @@ def bayard_api():
                     
 if __name__ == "__main__":
     create_table_if_not_exists()
-    app.run(host="0.0.0.0", port=5555, debug=True)
+    app.run(host="0.0.0.0", port=10000, debug=True)

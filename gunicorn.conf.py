@@ -1,3 +1,3 @@
 # gunicorn.conf.py
-bind = "0.0.0.0:5555"
+bind = "0.0.0.0:10000"
 workers = 4
