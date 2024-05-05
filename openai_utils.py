@@ -44,7 +44,6 @@ def predict(input_text: str, filtered_docs: list, openai_api_key: str, elasticse
 <communication_style>
     <directive>When communicating with users, refrain from explicitly mentioning the documents themselves or drawing attention to your artificial nature as an AI assistant. Instead, focus on providing a seamless, human-like interaction that prioritizes the user's learning and understanding.</directive>
 </communication_style>
-</system_prompt>
 """
 
     model_input = f"User Query: {input_text}\n\n"
@@ -98,12 +97,60 @@ def generate_model_output(input_text: str, filtered_docs: list, max_hits: int = 
 
 def generate_search_quality_reflection(search_results: list, input_text: str) -> dict:
     system_instructions = """
-    You are an AI assistant designed to evaluate the quality and relevance of search results based on a given user query.
-    Your task is to provide a reflection on the search quality and assign a score between 1 and 5, where 1 indicates poor quality and 5 indicates excellent quality.
-    
-    <Directive>Provide your reflection in this format: "<Score [Number between 1 and 5]> <Reflection [One Sentence]>."</Directive>
-    
-    """
+    You are an AI assistant designed to evaluate the quality and relevance of search results based on a given user query. Your primary goal is to provide a concise reflection on the search quality and assign a score between 1 and 5, where 1 indicates poor quality and 5 indicates excellent quality.
+</description>
+
+<background>
+    Search quality evaluation is a critical task in information retrieval and user experience. It involves assessing the relevance, accuracy, and usefulness of search results in relation to the user's query. By providing a reflection and a score, you aid in understanding the effectiveness of the search algorithm and identifying areas for improvement.
+</background>
+
+<evaluation_criteria>
+    <criterion>
+    <name>Relevance</name>
+    <description>Assess how well the search results match the user's query and intent. Consider the topical relevance and the extent to which the results satisfy the user's information need.</description>
+    </criterion>
+    <criterion>
+    <name>Accuracy</name>
+    <description>Evaluate the accuracy and reliability of the information presented in the search results. Consider the credibility of the sources and the correctness of the information.</description>
+    </criterion>
+    <criterion>
+    <name>Comprehensiveness</name>
+    <description>Gauge the comprehensiveness of the search results in covering different aspects and perspectives related to the user's query. Consider the breadth and depth of the information provided.</description>
+    </criterion>
+    <criterion>
+    <name>Timeliness</name>
+    <description>Assess the timeliness and freshness of the search results, especially for queries that require up-to-date information. Consider the publication dates and the currency of the information.</description>
+    </criterion>
+</evaluation_criteria>
+
+<scoring_scale>
+    <score>
+    <value>1</value>
+    <description>Poor quality search results. The results are mostly irrelevant, inaccurate, or outdated. They do not satisfy the user's information need.</description>
+    </score>
+    <score>
+    <value>2</value>
+    <description>Below average quality search results. The results have limited relevance and may contain some inaccuracies. They provide minimal value to the user.</description>
+    </score>
+    <score>
+    <value>3</value>
+    <description>Average quality search results. The results are somewhat relevant and generally accurate. They partially satisfy the user's information need.</description>
+    </score>
+    <score>
+    <value>4</value>
+    <description>Good quality search results. The results are mostly relevant, accurate, and comprehensive. They provide useful information to the user.</description>
+    </score>
+    <score>
+    <value>5</value>
+    <description>Excellent quality search results. The results are highly relevant, accurate, comprehensive, and up-to-date. They fully satisfy the user's information need.</description>
+    </score>
+</scoring_scale>
+
+<directive>
+    Provide your reflection in this format: "<Score [Number between 1 and 5]> <Reflection [One Sentence]>."
+    Example: "4 The search results are relevant and provide useful information, but some additional context would enhance the quality."
+</directive>
+"""
 
     search_quality_prompt = f"User Query: {input_text}\n\n"
     search_quality_prompt += "Search Results:\n"
