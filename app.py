@@ -18,8 +18,6 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-cache = Cache(app, config={"CACHE_TYPE": "simple"})
-cache.init_app(app)
 
 CORS(app, resources={r"/api/*": {"origins": "*", "allow_headers": ["Content-Type", "Authorization"]}})
 
@@ -164,7 +162,7 @@ def rate_limit(api_key):
     return True
 
 @app.route("/api/bayard", methods=["POST"])
-@cache.cached(timeout=300)
+
 def bayard_api():
     input_text = request.json.get("input_text")
     if not input_text:
