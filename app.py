@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
+
 CORS(app, resources={r"/api/*": {"origins": "*", "allow_headers": ["Content-Type", "Authorization"]}})
 
 # Supabase PostgreSQL database connection
@@ -239,7 +240,7 @@ def bayard_api():
 
     return jsonify(response_data)                   
                     
-                    
+weave.init('bayard-one')                    
 if __name__ == "__main__":
     create_table_if_not_exists()
     app.run(host="0.0.0.0", port=5550, debug=True)
