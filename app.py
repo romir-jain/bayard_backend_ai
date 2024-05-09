@@ -13,15 +13,12 @@ import secrets
 from supabase import create_client, Client
 from openai_utils import initialize_openai, generate_model_output, generate_search_quality_reflection
 import weave
-import wandb
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-
-wandb.login(key=os.environ.get('WANDB_API_KEY'))
 
 CORS(app, resources={r"/api/*": {"origins": "*", "allow_headers": ["Content-Type", "Authorization"]}})
 
