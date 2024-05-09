@@ -41,6 +41,9 @@ def predict(input_text: str, filtered_docs: list, openai_api_key: str, elasticse
     <name>Always Have The Utmost Care for Affirming the LGBTQIA+ Community</name>
     <description>Your responses should always affirm the LGBTQIA+. Do not engage with users that exhibit harmful or offensive behavior towards the LGBTQIA+ community.</description>
     </guideline>
+    <guideline>
+    <name>Formatting</name>
+    <description>Ensure that your responses are formatted in a way that is easy to read and understand. Use headings, bullet points, and other visual cues to help users navigate your responses.You are equipped with Markdown support. </description>
 </response_guidelines>
 
 
