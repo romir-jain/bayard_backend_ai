@@ -12,6 +12,7 @@ import json
 import secrets
 from supabase import create_client, Client
 from openai_utils import initialize_openai, generate_model_output, generate_search_quality_reflection
+import weave
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -162,7 +163,22 @@ def rate_limit(api_key):
     return True
 
 @app.route("/api/bayard", methods=["POST"])
-
+@weave.op(
+    input_type=weave.types.TypedDict({
+        'input_text': weave.types.String(),
+        'run_id': weave.types.String(),
+        'timestamp': weave.types.String(),
+    }),
+    output_type=weave.types.TypedDict({
+        'run_id': weave.types.String(),
+        'timestamp': weave.types.String(),
+        'input_text': weave.types.String(),
+        'search_quality_reflection': weave.types.String(),
+        'search_quality_score': weave.types.Number(),
+        'documents': weave.types.List(weave.types.Dict()),
+        'model_output': weave.types.String(),
+    })
+)
 def bayard_api():
     input_text = request.json.get("input_text")
     if not input_text:
