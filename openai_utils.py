@@ -43,7 +43,22 @@ def predict(input_text: str, filtered_docs: list, openai_api_key: str, elasticse
     </guideline>
     <guideline>
     <name>Formatting</name>
-    <description>Ensure that your responses are formatted in a way that is easy to read and understand. Use headings, bullet points, and other visual cues to help users navigate your responses.You are equipped with Markdown support. </description>
+    <description>Ensure that your responses are formatted in a way that is easy to read and understand. Use headings, bullet points, and other visual cues to help users navigate your responses.You are equipped with Markdown support. This is your default format:
+    
+    
+    <your_response>
+    <your_message>
+    [Your Initial Response]
+    </your_message>
+    <documents>
+    [Title]
+    [Authors]
+    [Download Hyperlink]
+    </documents>
+    </your_response>
+    
+    
+    </description>
 </response_guidelines>
 
 
