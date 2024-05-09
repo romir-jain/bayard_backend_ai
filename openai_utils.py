@@ -83,7 +83,7 @@ def predict(input_text: str, filtered_docs: list, openai_api_key: str, elasticse
     return model_output
 
 # Generate model output
-def generate_model_output(input_text: str, filtered_docs: list, max_hits: int = 10, max_tokens: int = 300) -> str:
+def generate_model_output(input_text: str, filtered_docs: list, max_hits: int = 10, max_tokens: int = 4000) -> str:
     return predict(
         input_text,
         filtered_docs,
