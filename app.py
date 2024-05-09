@@ -166,8 +166,6 @@ def rate_limit(api_key):
 @weave.op(
     input_type=weave.types.TypedDict({
         'input_text': weave.types.String(),
-        'run_id': weave.types.String(),
-        'timestamp': weave.types.String(),
     }),
     output_type=weave.types.TypedDict({
         'run_id': weave.types.String(),
@@ -237,7 +235,7 @@ def bayard_api():
         logging.error(f"Input Text: {input_text}")
         logging.error(f"Model Output: {model_output}")
 
-    return jsonify(response_data)                   
+    return response_data               
                     
 weave.init('bayard-one')                    
 if __name__ == "__main__":
