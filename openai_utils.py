@@ -83,7 +83,7 @@ def predict(input_text: str, filtered_docs: list, openai_api_key: str, elasticse
     return model_output
 
 # Generate model output
-def generate_model_output(input_text: str, filtered_docs: list, max_hits: int = 10, max_tokens: int = 300) -> str:
+def generate_model_output(input_text: str, filtered_docs: list, max_hits: int = 10, max_tokens: int = 4000) -> str:
     return predict(
         input_text,
         filtered_docs,
@@ -164,7 +164,7 @@ def generate_search_quality_reflection(search_results: list, input_text: str) ->
     response = openai.completions.create(
         model="gpt-3.5-turbo-instruct",
         prompt=system_instructions + "\n\n" + search_quality_prompt,
-        max_tokens=150
+        max_tokens=4000
     )
 
     reflection_output = response.choices[0].text.strip()
