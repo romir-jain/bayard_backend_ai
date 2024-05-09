@@ -164,7 +164,7 @@ def generate_search_quality_reflection(search_results: list, input_text: str) ->
     response = openai.completions.create(
         model="gpt-3.5-turbo-instruct",
         prompt=system_instructions + "\n\n" + search_quality_prompt,
-        max_tokens=150
+        max_tokens=4000
     )
 
     reflection_output = response.choices[0].text.strip()
