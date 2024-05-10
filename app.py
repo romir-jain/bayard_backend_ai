@@ -14,7 +14,7 @@ from supabase import create_client, Client
 from query_classifier import classify_query
 from openai_utils import initialize_openai, generate_model_output, generate_search_quality_reflection, generate_conversation_response
 import weave
-import redis
+from conversation_logger import log_conversation, get_conversation_history
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -27,10 +27,6 @@ CORS(app, resources={r"/api/*": {"origins": "*", "allow_headers": ["Content-Type
 # Supabase PostgreSQL database connection
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-
-REDIS_URL = os.environ.get("REDIS_URL")
-
-redis_client = redis.from_url(REDIS_URL)
 
 if not SUPABASE_URL or not SUPABASE_KEY:
     raise ValueError("SUPABASE_URL and SUPABASE_KEY environment variables are not set")
@@ -111,8 +107,6 @@ def generate_api_key():
 @weave.op(
     input_type=weave.types.TypedDict({
         'input_text': weave.types.String(),
-        'feedback_rating': weave.types.Number(),
-        'conversation_id': weave.types.String(),
     }),
     output_type=weave.types.TypedDict({
         'run_id': weave.types.String(),
@@ -122,14 +116,10 @@ def generate_api_key():
         'search_quality_score': weave.types.Number(),
         'documents': weave.types.List(weave.types.Dict()),
         'model_output': weave.types.String(),
-        'feedback_id': weave.types.String(),
-        'conversation_id': weave.types.String(),
     })
 )
 def bayard_api():
     input_text = request.json.get("input_text")
-    feedback_rating = request.json.get("feedback_rating")
-    conversation_id = request.json.get("conversation_id")
     if not input_text:
         return jsonify({"error": "Input text is required"}), 400
 
@@ -145,8 +135,9 @@ def bayard_api():
 
         # Generate the model output
         model_output = generate_model_output(input_text, search_results)
+        log_conversation(input_text, model_output)
 
-        feedback_id = str(uuid.uuid4())
+
         response_data = {
             "run_id": run_id,
             "timestamp": timestamp,
@@ -166,24 +157,10 @@ def bayard_api():
                 "title": doc.get("title", "No title provided"),
                 "yearPublished": doc.get("yearPublished", "No year published provided")
             } for doc in (search_results or [])],
-            "model_output": model_output,
-            "feedback_id": feedback_id,
-            "conversation_id": conversation_id,
+            "model_output": model_output
         }
 
         logging.info(f"Response Data: {response_data}")
-        
-    if feedback_rating is not None:
-        try:
-            feedback_key = f"feedback:{feedback_id}"
-            redis_client.hset(feedback_key, mapping={
-                "run_id": run_id,
-                "feedback_rating": feedback_rating,
-                "timestamp": timestamp,
-            })
-            redis_client.expire(feedback_key, 604800)  # Expire in 7 days
-        except Exception as e:
-            logging.error(f"Error storing feedback rating in Redis: {str(e)}")
 
         # Store the run in the database
         try:
@@ -203,12 +180,8 @@ def bayard_api():
         return jsonify(response_data)
     else:
         # Handle conversation without searching
-        conversation_response = generate_conversation_response(input_text, conversation_id)
+        conversation_response = generate_conversation_response(input_text)
         return jsonify({"model_output": conversation_response})
-    
-    
-    
-    
 
 @app.before_request
 def authenticate_request():
