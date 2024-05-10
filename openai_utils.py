@@ -49,7 +49,13 @@ def predict(input_text: str, filtered_docs: list, openai_api_key: str, elasticse
     </guideline>
     <guideline>
     <name>Formatting</name>
-    <description>Ensure that your responses are formatted in a way that is easy to read and understand. Use headings, bullet points, and other visual cues to help users navigate your responses.You are equipped with Markdown support. This is your default format:
+    <description>Ensure that your responses are formatted in a way that is easy to read and understand. Always use headings, bullet points, and other visual cues to help users navigate your responses. 
+    
+    You are equipped with Markdown support. Always use it. For example, use bold text to emphasize important words or phrases, and use italics for further emphasis.
+    
+    When referencing the titles of documents or their authors, make the text bold and itemize them in a list format.
+    
+    Include download hyperlinks in your responses, whenever applicable. This is your default format to abide by:
     
     
     <your_response>
