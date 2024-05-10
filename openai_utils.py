@@ -1,11 +1,19 @@
 import openai
 import os
 import re
+import json
+import redis
+import logging
+import time
+
+REDIS_URL = os.environ.get("REDIS_URL")
+
+redis_client = redis.from_url(REDIS_URL)
 
 def initialize_openai():
     openai.api_key = os.environ.get("OPENAI_API_KEY")
 
-def predict(input_text: str, filtered_docs: list, openai_api_key: str, elasticsearch_url: str, elasticsearch_index: str, max_hits: int = 10, max_tokens: int = 300) -> str:
+def predict(input_text: str, filtered_docs: list, openai_api_key: str, elasticsearch_url: str, elasticsearch_index: str, max_hits: int = 10, max_tokens: int = 300, conversation_id: str = None) -> str:
     system_instructions = """
     Your name is Bayard, an advanced open-source retrieval-augmented generative AI assistant created to guide users through a comprehensive academic corpus covering a wide range of LGBTQ+ topics. Specifically, you are an alpha-stage version of Bayard, named Bayard_One. Your purpose is to offer insightful, nuanced, and well-informed responses to user queries by drawing upon the wealth of information contained within the corpus documents. You were given over 20,000 LGBTQ+ academic works to query. You were created by a team at Bayard Lab, a research non-profit focused on leveraging artificial intelligence (AI) for good. Users can learn more at https://bayardlab.org.
     <objective>Provide relevant, informative, and thought-provoking content that enhances users' understanding of LGBTQ+ issues, history, culture, and experiences.</objective>
@@ -49,27 +57,15 @@ def predict(input_text: str, filtered_docs: list, openai_api_key: str, elasticse
     </guideline>
     <guideline>
     <name>Formatting</name>
-    <description>Ensure that your responses are formatted in a way that is easy to read and understand. Always use headings, bullet points, and other visual cues to help users navigate your responses. 
+    <description>Ensure that your responses are formatted in a way that is easy to read and understand. As applicable, use headings, bullet points, and other visual cues to help users navigate your responses. 
+    
+    Begin each response with an H1 heading that clearly and concisely describes the topic of your response.
     
     You are equipped with Markdown support. Always use it. For example, use bold text to emphasize important words or phrases, and use italics for further emphasis.
-    
-    When referencing the titles of documents or their authors, make the text bold and itemize them in a list format.
-    
-    Include download hyperlinks in your responses, whenever applicable. This is your default format to abide by:
-    
-    
-    <your_response>
-    <your_message>
-    [Your Initial Response]
-    </your_message>
-    <documents>
-    [Title]
-    [Authors]
-    [Download Hyperlink]
-    </documents>
-    </your_response>
-    
-    
+        
+    Let the reader know the documents are available for review and download in the Documents Pane. When referencing the titles of documents or their authors, make the text bold and itemize them in a bulleted list format; but, only do so when explicitly relevant as the user will have the Documents Pane to review the full text of the document.
+
+        
     </description>
 </response_guidelines>
 
@@ -80,6 +76,18 @@ def predict(input_text: str, filtered_docs: list, openai_api_key: str, elasticse
 </communication_style>
 """
 
+    conversation_history = []
+    if conversation_id:
+        conversation_key = f"conversation:{conversation_id}"
+        history = redis_client.lrange(conversation_key, 0, -1)
+        conversation_history = [json.loads(entry) for entry in history]
+        
+    prompt = f"Conversation History:\n"
+    for entry in conversation_history:
+        prompt += f"User: {entry['input_text']}\nBayard: {entry['model_output']}\n"
+    prompt += f"User: {input_text}\nBayard:"   
+    
+    
     model_input = f"User Query: {input_text}\n\n"
     model_input += "Retrieved Documents:\n"
     total_tokens = len(input_text.split())
@@ -114,11 +122,25 @@ def predict(input_text: str, filtered_docs: list, openai_api_key: str, elasticse
     )
 
     model_output = response.choices[0].message.content
+    
+    if conversation_id:
+        try:
+            conversation_key = f"conversation:{conversation_id}"
+            redis_client.rpush(conversation_key, json.dumps({
+                "input_text": input_text,
+                "model_output": model_output,
+                "timestamp": int(time.time()),
+            }))
+            redis_client.expire(conversation_key, 604800)  # Expire in 7 days
+        except Exception as e:
+            logging.error(f"Error storing conversation history in Redis: {str(e)}")
+
+    return model_output
 
     return model_output
 
 # Generate model output
-def generate_model_output(input_text: str, filtered_docs: list, max_hits: int = 10, max_tokens: int = 3000) -> str:
+def generate_model_output(input_text: str, filtered_docs: list, max_hits: int = 10, max_tokens: int = 4000) -> str:
     model_output = predict(
         input_text,
         filtered_docs,
@@ -212,7 +234,7 @@ def generate_search_quality_reflection(search_results: list, input_text: str) ->
         "search_quality_score": score
     }
 
-def generate_conversation_response(input_text):
+def generate_conversation_response(input_text, conversation_id):
     system_instructions = """
     You are Bayard, an advanced open-source retrieval-augmented generative AI assistant created to guide users through a comprehensive academic corpus covering a wide range of LGBTQIA+ topics. Your purpose is to offer insightful, nuanced, and well-informed responses to user queries by drawing upon the wealth of information contained within the corpus documents.
 
@@ -235,18 +257,28 @@ def generate_conversation_response(input_text):
     Remember, while you can engage in general conversation, your primary purpose is to serve as a research assistant for LGBTQIA+ topics. By encouraging users to ask specific questions, you can better fulfill your role and provide the most valuable assistance.
     """
 
-    prompt = f"User: {input_text}\nBayard:"
+    conversation_history = []
+    if conversation_id:
+        conversation_key = f"conversation:{conversation_id}"
+        history = redis_client.lrange(conversation_key, 0, -1)
+        conversation_history = [json.loads(entry) for entry in history]
+    
+    # Prepare the prompt with conversation history
+    prompt = f"Conversation History:\n"
+    for entry in conversation_history:
+        prompt += f"User: {entry['input_text']}\nBayard: {entry['model_output']}\n"
+    prompt += f"User: {input_text}\nBayard:"
+    
     response = openai.chat.completions.create(
         model=os.environ.get("OPENAI_MODEL_ID"),
         messages=[
             {"role": "system", "content": system_instructions},
             {"role": "user", "content": prompt}
         ],
-        max_tokens=150,
+        max_tokens=4000,
         n=1,
         stop=None,
         temperature=0.7,
     )
     model_output = response.choices[0].message.content
     return model_output
-
