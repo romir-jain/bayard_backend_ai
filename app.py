@@ -111,7 +111,7 @@ def generate_api_key():
 @weave.op(
     input_type=weave.types.TypedDict({
         'input_text': weave.types.String(),
-        'feedback_rating': weave.types.Integer(),
+        'feedback_rating': weave.types.Number(),
         'conversation_id': weave.types.String(),
     }),
     output_type=weave.types.TypedDict({
