@@ -41,7 +41,7 @@ def evaluate_response_quality(input_text: str, model_output: str) -> dict:
         temperature=0.7,
     )
 
-    evaluation_text = response.choices[0].message['content'].strip()
+    evaluation_text = response.choices[0].message.content.strip()
 
     evaluation_scores = {}
     for line in evaluation_text.split("\n"):
