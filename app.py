@@ -11,7 +11,8 @@ from elasticsearch_utils import search_elasticsearch
 import json
 import secrets
 from supabase import create_client, Client
-from openai_utils import initialize_openai, generate_model_output, generate_search_quality_reflection
+from query_classifier import classify_query
+from openai_utils import initialize_openai, generate_model_output, generate_search_quality_reflection, generate_conversation_response
 import weave
 
 # Configure logging
@@ -101,6 +102,84 @@ def generate_api_key():
         logging.error(f"Failed to generate API key: {str(e)}")
         return jsonify({"error": "Failed to generate API key"}), 500
 
+@app.route("/api/bayard", methods=["POST"])
+@weave.op(
+    input_type=weave.types.TypedDict({
+        'input_text': weave.types.String(),
+    }),
+    output_type=weave.types.TypedDict({
+        'run_id': weave.types.String(),
+        'timestamp': weave.types.String(),
+        'input_text': weave.types.String(),
+        'search_quality_reflection': weave.types.String(),
+        'search_quality_score': weave.types.Number(),
+        'documents': weave.types.List(weave.types.Dict()),
+        'model_output': weave.types.String(),
+    })
+)
+def bayard_api():
+    input_text = request.json.get("input_text")
+    if not input_text:
+        return jsonify({"error": "Input text is required"}), 400
+
+    query_type = classify_query(input_text)
+
+    if query_type == "search":
+        search_results = search_elasticsearch(input_text)
+        run_id = str(uuid.uuid4())
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # Generate search quality reflection and score
+        search_quality = generate_search_quality_reflection(search_results, input_text)
+
+        # Generate the model output
+        model_output = generate_model_output(input_text, search_results)
+
+        response_data = {
+            "run_id": run_id,
+            "timestamp": timestamp,
+            "input_text": input_text,
+            "search_quality_reflection": search_quality["search_quality_reflection"],
+            "search_quality_score": search_quality["search_quality_score"],
+            "documents": [{
+                "abstract": doc.get("abstract", "No abstract provided"),
+                "authors": [author.strip("{'name': '").strip("'}") for author in doc.get("authors", [])],
+                "categories": doc.get("categories", ["No categories provided"]),
+                "classification": doc.get("classification", "No classification provided"),
+                "concepts": doc.get("concepts", ["No concepts provided"]),
+                "downloadUrl": doc.get("downloadUrl", "No download URL provided"),
+                "emotion": doc.get("emotion", "No emotion provided"),
+                "id": doc.get("_id", "No ID provided"),
+                "sentiment": doc.get("sentiment", "No sentiment provided"),
+                "title": doc.get("title", "No title provided"),
+                "yearPublished": doc.get("yearPublished", "No year published provided")
+            } for doc in (search_results or [])],
+            "model_output": model_output
+        }
+
+        logging.info(f"Response Data: {response_data}")
+
+        # Store the run in the database
+        try:
+            supabase.table("runs").insert({
+                "run_id": run_id,
+                "timestamp": timestamp,
+                "input_text": input_text,
+                "model_output": model_output
+            }).execute()
+        except Exception as e:
+            logging.error(f"Error storing run in the database: {str(e)}")
+            logging.error(f"Run ID: {run_id}")
+            logging.error(f"Timestamp: {timestamp}")
+            logging.error(f"Input Text: {input_text}")
+            logging.error(f"Model Output: {model_output}")
+
+        return jsonify(response_data)
+    else:
+        # Handle conversation without searching
+        conversation_response = generate_conversation_response(input_text)
+        return jsonify({"model_output": conversation_response})
+
 @app.before_request
 def authenticate_request():
     # Check if the request is for the health check or API key generation endpoint
@@ -142,7 +221,7 @@ api_key_usage = {}
 
 # Rate limiting configuration
 RATE_LIMIT_QUERIES = 500
-RATE_LIMIT_PERIOD = 3600  # 1 hour in seconds
+RATE_LIMIT_PERIOD = 3600
 
 def rate_limit(api_key):
     current_time = datetime.datetime.now()
@@ -162,82 +241,8 @@ def rate_limit(api_key):
 
     return True
 
-@app.route("/api/bayard", methods=["POST"])
-@weave.op(
-    input_type=weave.types.TypedDict({
-        'input_text': weave.types.String(),
-    }),
-    output_type=weave.types.TypedDict({
-        'run_id': weave.types.String(),
-        'timestamp': weave.types.String(),
-        'input_text': weave.types.String(),
-        'search_quality_reflection': weave.types.String(),
-        'search_quality_score': weave.types.Number(),
-        'documents': weave.types.List(weave.types.Dict()),
-        'model_output': weave.types.String(),
-    })
-)
-def bayard_api():
-    input_text = request.json.get("input_text")
-    if not input_text:
-        return jsonify({"error": "Input text is required"}), 400
+weave.init('bayard-one')
 
-    run_id = str(uuid.uuid4())
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    # Search Elasticsearch for relevant documents
-    search_results = search_elasticsearch(input_text)
-
-    # Generate search quality reflection and score
-    search_quality = generate_search_quality_reflection(search_results, input_text)
-
-    # Generate the model output
-    model_output = ""
-    for chunk in generate_model_output(input_text, search_results):
-        model_output += chunk
-
-    response_data = {
-        "run_id": run_id,
-        "timestamp": timestamp,
-        "input_text": input_text,
-        "search_quality_reflection": search_quality["search_quality_reflection"],
-        "search_quality_score": search_quality["search_quality_score"],
-        "documents": [{
-            "abstract": doc.get("abstract", "No abstract provided"),
-            "authors": [author.strip("{'name': '").strip("'}") for author in doc.get("authors", [])],
-            "categories": doc.get("categories", ["No categories provided"]),
-            "classification": doc.get("classification", "No classification provided"),
-            "concepts": doc.get("concepts", ["No concepts provided"]),
-            "downloadUrl": doc.get("downloadUrl", "No download URL provided"),
-            "emotion": doc.get("emotion", "No emotion provided"),
-            "id": doc.get("_id", "No ID provided"),
-            "sentiment": doc.get("sentiment", "No sentiment provided"),
-            "title": doc.get("title", "No title provided"),
-            "yearPublished": doc.get("yearPublished", "No year published provided")
-        } for doc in (search_results or [])],
-        "model_output": model_output
-    }
-
-    logging.info(f"Response Data: {response_data}")
-
-    # Store the run in the database
-    try:
-        supabase.table("runs").insert({
-            "run_id": run_id,
-            "timestamp": timestamp,
-            "input_text": input_text,
-            "model_output": model_output
-        }).execute()
-    except Exception as e:
-        logging.error(f"Error storing run in the database: {str(e)}")
-        logging.error(f"Run ID: {run_id}")
-        logging.error(f"Timestamp: {timestamp}")
-        logging.error(f"Input Text: {input_text}")
-        logging.error(f"Model Output: {model_output}")
-
-    return response_data               
-                    
-weave.init('bayard-one')                    
 if __name__ == "__main__":
     create_table_if_not_exists()
     app.run(host="0.0.0.0", port=5550, debug=True)

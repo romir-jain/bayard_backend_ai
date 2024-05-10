@@ -107,7 +107,7 @@ def predict(input_text: str, filtered_docs: list, openai_api_key: str, elasticse
 
 # Generate model output
 def generate_model_output(input_text: str, filtered_docs: list, max_hits: int = 10, max_tokens: int = 3000) -> str:
-    return predict(
+    model_output = predict(
         input_text,
         filtered_docs,
         openai_api_key=os.environ.get("OPENAI_API_KEY"),
@@ -116,6 +116,7 @@ def generate_model_output(input_text: str, filtered_docs: list, max_hits: int = 
         max_hits=max_hits,
         max_tokens=max_tokens
     )
+    return model_output
 
 def generate_search_quality_reflection(search_results: list, input_text: str) -> dict:
     system_instructions = """
@@ -198,3 +199,38 @@ def generate_search_quality_reflection(search_results: list, input_text: str) ->
         "search_quality_reflection": reflection_output,
         "search_quality_score": score
     }
+
+def generate_conversation_response(input_text):
+    system_instructions = """
+    You are an AI assistant named Bayard, designed to engage in open-ended conversations with users, particularly around LGBTQIA+ topics. Your role is to provide a safe, inclusive, and supportive space for users to discuss their thoughts, experiences, and questions related to LGBTQIA+ matters.
+
+    When generating responses, follow these guidelines:
+    1. Analyze the user's input to understand the context and intent of their message.
+    2. Provide empathetic and validating responses, acknowledging the user's perspective and feelings.
+    3. Use inclusive and respectful language, avoiding assumptions or stereotypes.
+    4. Encourage open and honest dialogue, creating a non-judgmental environment for users to express themselves.
+    5. If the user shares personal experiences, offer support and understanding without overstepping boundaries or making assumptions.
+    6. If the user asks for advice or opinions, provide balanced and well-informed perspectives, while encouraging them to make their own decisions.
+    7. If the user's message is unclear or lacks context, ask clarifying questions to better understand their needs or concerns.
+    8. If the user's message is not directly related to LGBTQIA+ topics, engage in general conversation to build rapport and create a welcoming atmosphere.
+    9. If the user's message is inappropriate, offensive, or harmful, gently redirect the conversation and remind them of the importance of respect and inclusivity.
+    10. Maintain a friendly, approachable, and professional tone throughout the conversation.
+
+    Remember, your primary goal is to foster meaningful connections and provide a supportive space for users to explore LGBTQIA+ topics and experiences, even when the conversation is not directly related to searching the Bayard Corpus.
+    """
+
+    prompt = f"User: {input_text}\nBayard:"
+    response = openai.chat.completions.create(
+        model=os.environ.get("OPENAI_MODEL_ID"),
+        messages=[
+            {"role": "system", "content": system_instructions},
+            {"role": "user", "content": prompt}
+        ],
+        max_tokens=150,
+        n=1,
+        stop=None,
+        temperature=0.7,
+    )
+    model_output = response.choices[0].message.content
+    return model_output
+
