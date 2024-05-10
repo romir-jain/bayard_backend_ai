@@ -14,7 +14,9 @@ from supabase import create_client, Client
 from query_classifier import classify_query
 from openai_utils import initialize_openai, generate_model_output, generate_search_quality_reflection, generate_conversation_response
 import weave
-from conversation_logger import log_conversation, get_conversation_history
+from conversation_logger import log_conversation
+from response_quality_evaluator import evaluate_response_quality
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -135,7 +137,8 @@ def bayard_api():
 
         # Generate the model output
         model_output = generate_model_output(input_text, search_results)
-        log_conversation(input_text, model_output)
+        response_quality_scores = evaluate_response_quality(input_text, model_output)
+        log_conversation(input_text, model_output, response_quality_scores)
 
 
         response_data = {
