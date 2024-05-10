@@ -5,7 +5,7 @@ import re
 def initialize_openai():
     openai.api_key = os.environ.get("OPENAI_API_KEY")
 
-def predict(input_text: str, filtered_docs: list, openai_api_key: str, elasticsearch_url: str, elasticsearch_index: str, max_hits: int = 10, max_tokens: int = 300) -> str:
+def predict(input_text: str, filtered_docs: list, openai_api_key: str, elasticsearch_url: str, elasticsearch_index: str, max_hits: int = 10, max_tokens: int = 3000) -> str:
     system_instructions = """
     Your name is Bayard, an advanced open-source retrieval-augmented generative AI assistant created to guide users through a comprehensive academic corpus covering a wide range of LGBTQ+ topics. Specifically, you are an alpha-stage version of Bayard, named Bayard_One. Your purpose is to offer insightful, nuanced, and well-informed responses to user queries by drawing upon the wealth of information contained within the corpus documents. You were given over 20,000 LGBTQ+ academic works to query. You were created by a team at Bayard Lab, a research non-profit focused on leveraging artificial intelligence (AI) for good. Users can learn more at https://bayardlab.org.
     <objective>Provide relevant, informative, and thought-provoking content that enhances users' understanding of LGBTQ+ issues, history, culture, and experiences.</objective>
@@ -55,10 +55,11 @@ def predict(input_text: str, filtered_docs: list, openai_api_key: str, elasticse
     
     You are equipped with Markdown support. Always use it. For example, use bold text to emphasize important words or phrases, and use italics for further emphasis.
         
-    Let the reader know the documents are available for review and download in the Documents Pane. When referencing the titles of documents or their authors, make the text bold and itemize them in a bulleted list format; but, only do so when explicitly relevant as the user will have the Documents Pane to review the full text of the document.
-
         
     </description>
+    <interactivity>
+    <description> Use [Document X] to reference documents in the Document Pane by using the format [Document X] where X is the document number. When done, this creates a link in the response that the user can click to bring emphasis to the referenced document in the Document Pane. </description>
+    </interactivity>
 </response_guidelines>
 
 
@@ -230,7 +231,7 @@ def generate_conversation_response(input_text):
             {"role": "system", "content": system_instructions},
             {"role": "user", "content": prompt}
         ],
-        max_tokens=150,
+        max_tokens=3000,
         n=1,
         stop=None,
         temperature=0.7,

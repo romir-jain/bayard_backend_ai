@@ -137,7 +137,11 @@ def bayard_api():
 
         # Generate the model output
         model_output = generate_model_output(input_text, search_results)
-        response_quality_scores = evaluate_response_quality(input_text, model_output)
+        try:
+            response_quality_scores = evaluate_response_quality(input_text, model_output)
+        except Exception as e:
+            logging.error(f"Failed to evaluate response quality: {str(e)}")
+            response_quality_scores = None  # Default or fallback value if score evaluation fails
         log_conversation(input_text, model_output, response_quality_scores)
 
 

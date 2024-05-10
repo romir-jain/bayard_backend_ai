@@ -19,11 +19,11 @@ def evaluate_response_quality(input_text: str, model_output: str) -> dict:
     Additionally, provide an overall score between 1 and 5 for the model's response quality.
 
     Please format your evaluation as follows:
-    Relevance: <score>
-    Coherence: <score>
-    Informativeness: <score>
-    Engagement: <score>
-    Overall Score: <score>
+    Relevance: <score[integer]>
+    Coherence: <score[integer]>
+    Informativeness: <score[integer]>
+    Engagement: <score[integer]>
+    Overall Score: <score[integer]>
 
     Input Text: {input_text}
     Model Output: {model_output}
