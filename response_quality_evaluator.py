@@ -1,5 +1,6 @@
-import openai
+import cohere
 import os
+
 
 def evaluate_response_quality(input_text: str, model_output: str) -> dict:
     system_message = f"""
@@ -29,16 +30,14 @@ def evaluate_response_quality(input_text: str, model_output: str) -> dict:
     Model Output: {model_output}
     """
 
-    response = openai.chat.completions.create(
-        model="gpt-3.5-turbo",
-        messages=[
-            {"role": "system", "content": system_message},
-            {"role": "user", "content": f"Input Text: {input_text}\nModel Output: {model_output}"}
+    co = cohere.Client(os.getenv('COHERE_API_KEY'))
+    response = co.chat(
+        chat_history=[
+            {"role": "system", "message": system_message},
+            {"role": "user", "message": f"Input Text: {input_text}\nModel Output: {model_output}"}
         ],
-        max_tokens=150,
-        n=1,
-        stop=None,
-        temperature=0.7,
+        message="Evaluate the response quality.",
+        connectors=[{"id": "web-search"}],
     )
 
     evaluation_text = response.choices[0].message.content.strip()

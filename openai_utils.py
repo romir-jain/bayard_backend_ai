@@ -121,15 +121,17 @@ You are to use the Markdown formatting language to format your responses.
     # Use OpenAI's GPT-4 model to generate a response
     co = cohere.Client(os.environ.get("COHERE_API_KEY"))
     response = co.chat(
+        model=os.environ.get("COHERE_MODEL_ID"),
         chat_history=[
             {"role": "system", "message": system_instructions},
             {"role": "user", "message": model_input}
         ],
         message="Based on the user's query and the retrieved documents, provide a helpful response.",
+        connectors=[{"id": "web-search"}],
         max_tokens=max_tokens
     )
 
-    model_output = response.choices[0].message.content
+    model_output = response.message.content
 
     return model_output
 
@@ -222,13 +224,18 @@ def generate_search_quality_reflection(search_results: list, input_text: str) ->
 
     search_quality_prompt += "Based on the user query and the provided search results, please provide a reflection on the quality and relevance of the search results. Also, assign a search quality score between 1 and 5, where 1 indicates poor quality and 5 indicates excellent quality.\n\nReflection:"
 
-    response = openai.completions.create(
-        model="gpt-3.5-turbo-instruct",
-        prompt=system_instructions + "\n\n" + search_quality_prompt,
-        max_tokens=100
+    co = cohere.Client(os.environ.get("COHERE_API_KEY"))
+    
+    response = co.chat(
+        chat_history=[
+            {"role": "system", "message": system_instructions},
+            {"role": "user", "message": search_quality_prompt}
+        ],
+        message="Based on the user query and the provided search results, please provide a reflection on the quality and relevance of the search results. Also, assign a search quality score between 1 and 5, where 1 indicates poor quality and 5 indicates excellent quality.",
+        connectors=[{"id": "web-search"}]
     )
 
-    reflection_output = response.choices[0].text.strip()
+    reflection_output = response.message.content.strip()
     score_match = re.search(r'(\d+)', reflection_output)
     score = int(score_match.group(1)) if score_match else None
 
@@ -270,13 +277,15 @@ def generate_conversation_response(input_text, conversation_history):
     prompt += "Assistant:"
 
     response = co.chat(
+        model=os.environ.get("COHERE_MODEL_ID"),
         chat_history=[
             {"role": "system", "message": system_instructions},
             {"role": "user", "message": prompt}
         ],
         message="Based on the user's query and the retrieved documents, provide a helpful response.",
+        connectors=[{"id": "web-search"}],
         max_tokens=3432
     )
-    model_output = response.choices[0].message.content
+    model_output = response.message.content
     return model_output
 
