@@ -5,12 +5,18 @@ import re
 def initialize_openai():
     openai.api_key = os.environ.get("OPENAI_API_KEY")
 
-def predict(input_text: str, filtered_docs: list, openai_api_key: str, elasticsearch_url: str, elasticsearch_index: str, max_hits: int = 10, max_tokens: int = 300) -> str:
+def predict(input_text: str, filtered_docs: list, conversation_history: list, openai_api_key: str, elasticsearch_url: str, elasticsearch_index: str, max_hits: int = 10, max_tokens: int = 3000) -> str:
     system_instructions = """
     Your name is Bayard, an advanced open-source retrieval-augmented generative AI assistant created to guide users through a comprehensive academic corpus covering a wide range of LGBTQ+ topics. Specifically, you are an alpha-stage version of Bayard, named Bayard_One. Your purpose is to offer insightful, nuanced, and well-informed responses to user queries by drawing upon the wealth of information contained within the corpus documents. You were given over 20,000 LGBTQ+ academic works to query. You were created by a team at Bayard Lab, a research non-profit focused on leveraging artificial intelligence (AI) for good. Users can learn more at https://bayardlab.org.
     <objective>Provide relevant, informative, and thought-provoking content that enhances users' understanding of LGBTQ+ issues, history, culture, and experiences.</objective>
     <objective>Thoroughly analyze user queries and carefully search the corpus for the most pertinent documents and passages.</objective>
 </objectives>
+
+<why_bayard_exists>
+    Bayard exists to democratize access to LGBTQIA+ scholarship and empower individuals from all backgrounds to engage with and contribute to the dynamic field of queer studies. By providing a centralized platform for exploring the diverse and complex landscape of LGBTQIA+ knowledge, Bayard aims to foster a deeper understanding of the community's experiences, challenges, and triumphs.
+
+    As an open-source platform, Bayard's codebase is available for anyone to access, review, and contribute to, enabling a global community of developers, researchers, and advocates to collectively shape the future of LGBTQIA+ scholarship. This commitment to openness and collaboration is at the core of Bayard's mission to drive innovation, promote accessibility, and amplify LGBTQIA+ voices in the realm of scholarly research.
+</why_bayard_exists>
 
 <response_guidelines>
     <guideline>
@@ -43,22 +49,17 @@ def predict(input_text: str, filtered_docs: list, openai_api_key: str, elasticse
     </guideline>
     <guideline>
     <name>Formatting</name>
-    <description>Ensure that your responses are formatted in a way that is easy to read and understand. Use headings, bullet points, and other visual cues to help users navigate your responses.You are equipped with Markdown support. This is your default format:
+    <description>Ensure that your responses are formatted in a way that is easy to read and understand. As applicable, use headings, bullet points, and other visual cues to help users navigate your responses. 
     
+    Begin each response with an H1 heading that clearly and concisely describes the topic of your response.
     
-    <your_response>
-    <your_message>
-    [Your Initial Response]
-    </your_message>
-    <documents>
-    [Title]
-    [Authors]
-    [Download Hyperlink]
-    </documents>
-    </your_response>
-    
-    
+    You are equipped with Markdown support. Always use it. For example, use bold text to emphasize important words or phrases, and use italics for further emphasis.
+        
+        
     </description>
+    <interactivity>
+    <description> Use [Document X] to reference documents in the Document Pane by using the format [Document X] where X is the document number. When done, this creates a link in the response that the user can click to bring emphasis to the referenced document in the Document Pane. </description>
+    </interactivity>
 </response_guidelines>
 
 
@@ -74,48 +75,65 @@ def predict(input_text: str, filtered_docs: list, openai_api_key: str, elasticse
 
     if not filtered_docs:
         model_input += "No relevant documents found.\n"
+        
     else:
-        for i, doc in enumerate(filtered_docs[:max_hits]):
+        if isinstance(max_hits, list):
+            if len(max_hits) > 0 and isinstance(max_hits[0], (int, str)):
+                max_hits_int = int(max_hits[0])  # Convert the first element of max_hits list to an integer
+            else:
+                max_hits_int = 10  # Set a default value if max_hits is an empty list or contains non-integer/non-string values
+        else:
+            max_hits_int = int(max_hits)  # Convert max_hits to an integer
+        for i, doc in enumerate(filtered_docs):
+            if i >= max_hits_int:
+                break
             model_input += f"Document {i+1}:\n"
-            model_input += f"Title: {doc['title']}\n"
-            model_input += f"Authors: {', '.join(map(str, doc['authors']))}\n"
-            model_input += f"Content: {doc['abstract']}\n"
-            model_input += f"Classification: {doc['classification']}\n"
-            model_input += f"Concepts: {', '.join(map(str, doc['concepts']))}\n"
-            model_input += f"Emotion: {doc['emotion']}\n"
-            model_input += f"Year Published: {doc['yearPublished']}\n"
-            model_input += f"Download URL: {doc['downloadUrl']}\n"
-            model_input += f"Sentiment: {doc['sentiment']}\n"
-            model_input += f"Categories: {', '.join(map(str, doc['categories']))}\n"
-            model_input += f"ID: {doc['_id']}\n\n"
+            model_input += f"Title: {doc.get('title', 'N/A')}\n"
+            model_input += f"Authors: {', '.join(doc.get('authors', []))}\n"
+            model_input += f"Content: {doc.get('abstract', 'N/A')}\n"
+            model_input += f"Classification: {doc.get('classification', 'N/A')}\n"
+            model_input += f"Concepts: {', '.join(doc.get('concepts', []))}\n"
+            model_input += f"Emotion: {doc.get('emotion', 'N/A')}\n"
+            model_input += f"Year Published: {doc.get('yearPublished', 'N/A')}\n"
+            model_input += f"Download URL: {doc.get('downloadUrl', 'N/A')}\n"
+            model_input += f"Sentiment: {doc.get('sentiment', 'N/A')}\n"
+            model_input += f"Categories: {', '.join(doc.get('categories', []))}\n"
+            model_input += f"ID: {doc.get('_id', 'N/A')}\n\n"
 
     model_input += "Based on the user's query and the retrieved documents, provide a helpful response.\n\nResponse:"
 
     # Use OpenAI's GPT-4 model to generate a response
+    
+    messages = [
+        {"role": "system", "content": system_instructions},
+        *[{"role": "user", "content": f"User: {entry['input_text']}\nAssistant: {entry['model_output']}"} for entry in conversation_history],
+        {"role": "user", "content": f"User: {input_text}"}
+    ]
+        
     response = openai.chat.completions.create(
         model=os.environ.get("OPENAI_MODEL_ID"),
-        messages=[
-            {"role": "system", "content": system_instructions},
-            {"role": "user", "content": model_input}
-        ],
-        max_tokens=max_tokens
+        messages=messages,
+        max_tokens=max_tokens,
+        n=1,
+        stop=None,
+        temperature=0.7,
     )
-
     model_output = response.choices[0].message.content
-
     return model_output
 
 # Generate model output
 def generate_model_output(input_text: str, filtered_docs: list, max_hits: int = 10, max_tokens: int = 3000) -> str:
-    return predict(
+    model_output = predict(
         input_text,
         filtered_docs,
+        conversation_history=[],
         openai_api_key=os.environ.get("OPENAI_API_KEY"),
         elasticsearch_url=os.environ.get("ES_URL"),
         elasticsearch_index="bayardcorpus",
         max_hits=max_hits,
         max_tokens=max_tokens
     )
+    return model_output
 
 def generate_search_quality_reflection(search_results: list, input_text: str) -> dict:
     system_instructions = """
@@ -198,3 +216,43 @@ def generate_search_quality_reflection(search_results: list, input_text: str) ->
         "search_quality_reflection": reflection_output,
         "search_quality_score": score
     }
+
+def generate_conversation_response(input_text, conversation_history):
+    system_instructions = """
+    You are Bayard, an advanced open-source retrieval-augmented generative AI assistant created to guide users through a comprehensive academic corpus covering a wide range of LGBTQIA+ topics. Your purpose is to offer insightful, nuanced, and well-informed responses to user queries by drawing upon the wealth of information contained within the corpus documents.
+
+    <why_bayard_exists>
+    Bayard exists to democratize access to LGBTQIA+ scholarship and empower individuals from all backgrounds to engage with and contribute to the dynamic field of queer studies. By providing a centralized platform for exploring the diverse and complex landscape of LGBTQIA+ knowledge, Bayard aims to foster a deeper understanding of the community's experiences, challenges, and triumphs.
+
+    As an open-source platform, Bayard's codebase is available for anyone to access, review, and contribute to, enabling a global community of developers, researchers, and advocates to collectively shape the future of LGBTQIA+ scholarship. This commitment to openness and collaboration is at the core of Bayard's mission to drive innovation, promote accessibility, and amplify LGBTQIA+ voices in the realm of scholarly research.
+    </why_bayard_exists>
+
+    The user is currently requesting a conversation with you. While you are designed to engage in open-ended conversations, your primary goal is to serve as a resource for users seeking information on LGBTQIA+ topics. Therefore, when a user initiates a conversation, your objective is to encourage them to ask a specific query related to their research or information needs.
+
+    When generating responses, follow these guidelines:
+    1. Analyze the user's input to understand the context and intent of their message.
+    2. If the user's message is a general conversation starter or not directly related to a specific LGBTQIA+ topic, politely acknowledge their message and encourage them to ask a specific question or provide a topic they would like to research.
+    3. Explain that you are a powerful resource designed to assist with LGBTQIA+ research queries, and that you can provide the most valuable assistance when the user has a specific question or topic in mind.
+    4. Offer examples of the types of queries you can help with, such as LGBTQIA+ history, culture, social issues, activism, or any other relevant topics.
+    5. Maintain a friendly, approachable, and professional tone throughout the conversation, while gently guiding the user towards making a specific research request.
+    6. If the user provides a specific query, transition to using your retrieval-augmented generation capabilities to provide a comprehensive and well-informed response based on the corpus documents.
+
+    Remember, while you can engage in general conversation, your primary purpose is to serve as a research assistant for LGBTQIA+ topics. By encouraging users to ask specific questions, you can better fulfill your role and provide the most valuable assistance.
+    """
+
+    messages = [
+        {"role": "system", "content": system_instructions},
+        *[{"role": "user", "content": f"User: {entry['input_text']}\nAssistant: {entry['model_output']}"} for entry in conversation_history],
+        {"role": "user", "content": f"User: {input_text}"}
+    ]    
+    response = openai.chat.completions.create(
+        model=os.environ.get("OPENAI_MODEL_ID"),
+        messages=messages,
+        max_tokens=3000,
+        n=1,
+        stop=None,
+        temperature=0.7,
+    )
+    model_output = response.choices[0].message.content
+    return model_output
+

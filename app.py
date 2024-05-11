@@ -8,11 +8,19 @@ from flask import Flask, request, jsonify, make_response
 from flask_cors import CORS
 from google.oauth2 import service_account
 from elasticsearch_utils import search_elasticsearch
+import psycopg2
 import json
 import secrets
 from supabase import create_client, Client
-from openai_utils import initialize_openai, generate_model_output, generate_search_quality_reflection
+from query_classifier import classify_query
+from openai_utils import initialize_openai, generate_model_output, generate_search_quality_reflection, generate_conversation_response
 import weave
+from conversation_logger import log_conversation
+from response_quality_evaluator import evaluate_response_quality
+import redis
+
+redis_url = os.environ.get("REDIS_URL")
+redis_client = redis.from_url(redis_url)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -89,17 +97,118 @@ def generate_api_key():
     try:
         # Generate a new API key
         new_api_key = secrets.token_urlsafe(32)
+        
+        # Connect to the PostgreSQL database
+        conn = psycopg2.connect(os.environ.get("DATABASE_URL"))
+        cur = conn.cursor()
+
         # Store the new API key in the database
-        data = supabase.table("keys").insert({"api_key": new_api_key}).execute()
+        cur.execute("INSERT INTO keys (api_key) VALUES (%s)", (new_api_key,))
+        conn.commit()
 
         # Check if the insertion was successful
-        if data:
+        if cur.rowcount > 0:
+            cur.close()
+            conn.close()
             return jsonify({"api_key": new_api_key}), 200
         else:
             raise Exception("Failed to store API key in the database")
     except Exception as e:
         logging.error(f"Failed to generate API key: {str(e)}")
         return jsonify({"error": "Failed to generate API key"}), 500
+
+@app.route("/api/bayard", methods=["POST"])
+@weave.op(
+    input_type=weave.types.TypedDict({
+        'input_text': weave.types.String(),
+    }),
+    output_type=weave.types.TypedDict({
+        'run_id': weave.types.String(),
+        'timestamp': weave.types.String(),
+        'input_text': weave.types.String(),
+        'search_quality_reflection': weave.types.String(),
+        'search_quality_score': weave.types.Number(),
+        'documents': weave.types.List(weave.types.Dict()),
+        'model_output': weave.types.String(),
+    })
+)
+def bayard_api():
+    input_text = request.json.get("input_text")
+    if not input_text:
+        return jsonify({"error": "Input text is required"}), 400
+
+    user_id = request.json.get("user_id")  # Assuming user_id is provided in the request
+
+    # Retrieve conversation history from Redis
+    conversation_history = get_conversation_history_from_cache(user_id)
+
+    query_type = classify_query(input_text)
+
+    if query_type == "search":
+        search_results = search_elasticsearch(input_text)
+        run_id = str(uuid.uuid4())
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # Generate search quality reflection and score
+        search_quality = generate_search_quality_reflection(search_results, input_text)
+
+        # Generate the model output
+        model_output = generate_model_output(input_text, search_results, conversation_history)        
+        try:
+            response_quality_scores = evaluate_response_quality(input_text, model_output)
+        except Exception as e:
+            logging.error(f"Failed to evaluate response quality: {str(e)}")
+            response_quality_scores = None  # Default or fallback value if score evaluation fails
+        log_conversation(input_text, model_output, response_quality_scores)
+
+        response_data = {
+            "run_id": run_id,
+            "timestamp": timestamp,
+            "input_text": input_text,
+            "search_quality_reflection": search_quality["search_quality_reflection"],
+            "search_quality_score": search_quality["search_quality_score"],
+            "documents": [{
+                "abstract": doc.get("abstract", "No abstract provided"),
+                "authors": [author.strip("{'name': '").strip("'}") for author in doc.get("authors", [])],
+                "categories": doc.get("categories", ["No categories provided"]),
+                "classification": doc.get("classification", "No classification provided"),
+                "concepts": doc.get("concepts", ["No concepts provided"]),
+                "downloadUrl": doc.get("downloadUrl", "No download URL provided"),
+                "emotion": doc.get("emotion", "No emotion provided"),
+                "id": doc.get("_id", "No ID provided"),
+                "sentiment": doc.get("sentiment", "No sentiment provided"),
+                "title": doc.get("title", "No title provided"),
+                "yearPublished": doc.get("yearPublished", "No year published provided")
+            } for doc in (search_results or [])],
+            "model_output": model_output
+        }
+
+        logging.info(f"Response Data: {response_data}")
+
+        # Store the run in the database
+        try:
+            supabase.table("runs").insert({
+                "run_id": run_id,
+                "timestamp": timestamp,
+                "input_text": input_text,
+                "search_quality_reflection": search_quality,
+                "model_output": model_output,
+                "response_quality_scores": json.dumps(response_quality_scores)
+            }).execute()
+        except Exception as e:
+            logging.error(f"Failed to store run in the database: {str(e)}")
+
+        # Update conversation history in Redis
+        log_conversation_in_cache(user_id, input_text, model_output)
+
+        return jsonify(response_data)
+    else:
+        # Handle conversation without searching
+        conversation_response = generate_conversation_response(input_text, conversation_history)        
+        # Update conversation history in Redis
+        log_conversation_in_cache(user_id, input_text, conversation_response)
+
+        return jsonify({"model_output": conversation_response})
 
 @app.before_request
 def authenticate_request():
@@ -128,9 +237,17 @@ def authenticate_request():
         return jsonify({'error': 'API key not configured'}), 500
 
     # Check if the API key exists in the database
-    api_key_exists = supabase.table("keys").select("api_key").ilike("api_key", bayard_api_key).execute()    
-    logging.info(f"API key exists in database: {api_key_exists.data}")
-    if not api_key_exists.data:
+    
+    # Connect to the PostgreSQL database
+    conn = psycopg2.connect(os.environ.get("DATABASE_URL"))
+    cur = conn.cursor()
+    cur.execute("SELECT api_key FROM keys WHERE api_key = %s", (bayard_api_key,))
+    api_key_exists = cur.fetchone()
+    cur.close()
+    conn.close()
+
+    logging.info(f"API key exists in database: {api_key_exists}")
+    if not api_key_exists:
         return jsonify({'error': 'Invalid API key'}), 401
 
     # Check if the rate limit has been exceeded
@@ -140,9 +257,35 @@ def authenticate_request():
 # Dictionary to store API key usage
 api_key_usage = {}
 
+conversation_history_cache = {}
+
+def log_conversation_in_cache(user_id: str, input_text: str, model_output: str):
+    # Retrieve the user's conversation history from Redis
+    conversation_history = redis_client.lrange(f"conversation_history:{user_id}", 0, -1)
+    conversation_history = [json.loads(entry) for entry in conversation_history]
+
+    # Append the new conversation to the user's history
+    conversation_history.append({
+        "input_text": input_text,
+        "model_output": model_output
+    })
+
+    # Limit the conversation history to the last 3 entries
+    conversation_history = conversation_history[-3:]
+
+    # Store the updated conversation history in Redis
+    redis_client.delete(f"conversation_history:{user_id}")
+    for entry in conversation_history:
+        redis_client.rpush(f"conversation_history:{user_id}", json.dumps(entry))
+
+def get_conversation_history_from_cache(user_id: str):
+    conversation_history = redis_client.lrange(f"conversation_history:{user_id}", 0, -1)
+    conversation_history = [json.loads(entry) for entry in conversation_history]
+    return conversation_history
+
 # Rate limiting configuration
 RATE_LIMIT_QUERIES = 500
-RATE_LIMIT_PERIOD = 3600  # 1 hour in seconds
+RATE_LIMIT_PERIOD = 3600
 
 def rate_limit(api_key):
     current_time = datetime.datetime.now()
@@ -162,84 +305,8 @@ def rate_limit(api_key):
 
     return True
 
-@app.route("/api/bayard", methods=["POST"])
-@weave.op(
-    input_type=weave.types.TypedDict({
-        'input_text': weave.types.String(),
-        'run_id': weave.types.String(),
-        'timestamp': weave.types.String(),
-    }),
-    output_type=weave.types.TypedDict({
-        'run_id': weave.types.String(),
-        'timestamp': weave.types.String(),
-        'input_text': weave.types.String(),
-        'search_quality_reflection': weave.types.String(),
-        'search_quality_score': weave.types.Number(),
-        'documents': weave.types.List(weave.types.Dict()),
-        'model_output': weave.types.String(),
-    })
-)
-def bayard_api():
-    input_text = request.json.get("input_text")
-    if not input_text:
-        return jsonify({"error": "Input text is required"}), 400
+weave.init('bayard-one')
 
-    run_id = str(uuid.uuid4())
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    # Search Elasticsearch for relevant documents
-    search_results = search_elasticsearch(input_text)
-
-    # Generate search quality reflection and score
-    search_quality = generate_search_quality_reflection(search_results, input_text)
-
-    # Generate the model output
-    model_output = ""
-    for chunk in generate_model_output(input_text, search_results):
-        model_output += chunk
-
-    response_data = {
-        "run_id": run_id,
-        "timestamp": timestamp,
-        "input_text": input_text,
-        "search_quality_reflection": search_quality["search_quality_reflection"],
-        "search_quality_score": search_quality["search_quality_score"],
-        "documents": [{
-            "abstract": doc.get("abstract", "No abstract provided"),
-            "authors": [author.strip("{'name': '").strip("'}") for author in doc.get("authors", [])],
-            "categories": doc.get("categories", ["No categories provided"]),
-            "classification": doc.get("classification", "No classification provided"),
-            "concepts": doc.get("concepts", ["No concepts provided"]),
-            "downloadUrl": doc.get("downloadUrl", "No download URL provided"),
-            "emotion": doc.get("emotion", "No emotion provided"),
-            "id": doc.get("_id", "No ID provided"),
-            "sentiment": doc.get("sentiment", "No sentiment provided"),
-            "title": doc.get("title", "No title provided"),
-            "yearPublished": doc.get("yearPublished", "No year published provided")
-        } for doc in (search_results or [])],
-        "model_output": model_output
-    }
-
-    logging.info(f"Response Data: {response_data}")
-
-    # Store the run in the database
-    try:
-        supabase.table("runs").insert({
-            "run_id": run_id,
-            "timestamp": timestamp,
-            "input_text": input_text,
-            "model_output": model_output
-        }).execute()
-    except Exception as e:
-        logging.error(f"Error storing run in the database: {str(e)}")
-        logging.error(f"Run ID: {run_id}")
-        logging.error(f"Timestamp: {timestamp}")
-        logging.error(f"Input Text: {input_text}")
-        logging.error(f"Model Output: {model_output}")
-
-    return jsonify(response_data)                   
-                    
-weave.init('bayard-one')                    
 if __name__ == "__main__":
     create_table_if_not_exists()
     app.run(host="0.0.0.0", port=5550, debug=True)
