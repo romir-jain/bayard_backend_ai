@@ -8,16 +8,15 @@ from flask import Flask, request, jsonify, make_response
 from flask_cors import CORS
 from google.oauth2 import service_account
 from elasticsearch_utils import search_elasticsearch
+import psycopg2
 import json
 import secrets
 from supabase import create_client, Client
 from query_classifier import classify_query
-from openai_utils import initialize_openai, initialize_cohere, generate_model_output, generate_search_quality_reflection, generate_conversation_response
+from openai_utils import initialize_openai, generate_model_output, generate_search_quality_reflection, generate_conversation_response
 import weave
 from conversation_logger import log_conversation
 from response_quality_evaluator import evaluate_response_quality
-import redis
-import tiktoken
 
 
 # Configure logging
@@ -36,10 +35,6 @@ if not SUPABASE_URL or not SUPABASE_KEY:
     raise ValueError("SUPABASE_URL and SUPABASE_KEY environment variables are not set")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-# Redis connection
-REDIS_URL = "redis://red-covbrn21hbls73dnusrg:6379"
-redis_client = redis.from_url(REDIS_URL)
 
 def create_table_if_not_exists():
     runs_table = """
@@ -81,7 +76,6 @@ def add_headers(response):
     return response
 
 initialize_openai()
-initialize_cohere()
 
 @app.route("/health-check", methods=["GET"])
 def health_check():
@@ -100,52 +94,25 @@ def generate_api_key():
     try:
         # Generate a new API key
         new_api_key = secrets.token_urlsafe(32)
+        
+        # Connect to the PostgreSQL database
+        conn = psycopg2.connect(os.environ.get("DATABASE_URL"))
+        cur = conn.cursor()
+
         # Store the new API key in the database
-        data = supabase.table("keys").insert({"api_key": new_api_key}).execute()
+        cur.execute("INSERT INTO keys (api_key) VALUES (%s)", (new_api_key,))
+        conn.commit()
 
         # Check if the insertion was successful
-        if data:
+        if cur.rowcount > 0:
+            cur.close()
+            conn.close()
             return jsonify({"api_key": new_api_key}), 200
         else:
             raise Exception("Failed to store API key in the database")
     except Exception as e:
         logging.error(f"Failed to generate API key: {str(e)}")
         return jsonify({"error": "Failed to generate API key"}), 500
-
-def generate_session_id():
-    return str(uuid.uuid4())
-
-def store_conversation_history(session_id, user_input, model_output):
-    conversation_key = f"conversation_history:{session_id}"
-    conversation_data = {
-        "user_input": user_input,
-        "model_output": model_output
-    }
-    redis_client.rpush(conversation_key, json.dumps(conversation_data))
-
-def get_conversation_history(session_id):
-    conversation_key = f"conversation_history:{session_id}"
-    conversation_data = redis_client.lrange(conversation_key, 0, -1)
-    conversation_history = [json.loads(data) for data in conversation_data]
-    return conversation_history
-
-def truncate_conversation_history(conversation_history, max_tokens):
-    tokenizer = tiktoken.get_encoding("cl100k_base")
-    total_tokens = 0
-    truncated_history = []
-
-    for message in reversed(conversation_history):
-        user_input_tokens = len(tokenizer.encode(message["user_input"]))
-        model_output_tokens = len(tokenizer.encode(message["model_output"]))
-        message_tokens = user_input_tokens + model_output_tokens
-
-        if total_tokens + message_tokens <= max_tokens:
-            total_tokens += message_tokens
-            truncated_history.insert(0, message)
-        else:
-            break
-
-    return truncated_history
 
 @app.route("/api/bayard", methods=["POST"])
 @weave.op(
@@ -167,13 +134,6 @@ def bayard_api():
     if not input_text:
         return jsonify({"error": "Input text is required"}), 400
 
-    session_id = request.headers.get('Session-ID')  # Assuming the session ID is sent in the request headers
-    if not session_id:
-        session_id = generate_session_id()
-
-    # Retrieve conversation history for the current session
-    conversation_history = get_conversation_history(session_id)
-
     query_type = classify_query(input_text)
 
     if query_type == "search":
@@ -185,7 +145,7 @@ def bayard_api():
         search_quality = generate_search_quality_reflection(search_results, input_text)
 
         # Generate the model output
-        model_output = generate_model_output(input_text, search_results, conversation_history)
+        model_output = generate_model_output(input_text, search_results)
         try:
             response_quality_scores = evaluate_response_quality(input_text, model_output)
         except Exception as e:
@@ -193,8 +153,6 @@ def bayard_api():
             response_quality_scores = None  # Default or fallback value if score evaluation fails
         log_conversation(input_text, model_output, response_quality_scores)
 
-        # Store the current input and output in the conversation history
-        store_conversation_history(session_id, input_text, model_output)
 
         response_data = {
             "run_id": run_id,
@@ -238,11 +196,7 @@ def bayard_api():
         return jsonify(response_data)
     else:
         # Handle conversation without searching
-        conversation_response = generate_conversation_response(input_text, conversation_history)
-        
-        # Store the current input and output in the conversation history
-        store_conversation_history(session_id, input_text, conversation_response)
-        
+        conversation_response = generate_conversation_response(input_text)
         return jsonify({"model_output": conversation_response})
 
 @app.before_request
@@ -272,9 +226,17 @@ def authenticate_request():
         return jsonify({'error': 'API key not configured'}), 500
 
     # Check if the API key exists in the database
-    api_key_exists = supabase.table("keys").select("api_key").ilike("api_key", bayard_api_key).execute()    
-    logging.info(f"API key exists in database: {api_key_exists.data}")
-    if not api_key_exists.data:
+    
+    # Connect to the PostgreSQL database
+    conn = psycopg2.connect(os.environ.get("DATABASE_URL"))
+    cur = conn.cursor()
+    cur.execute("SELECT api_key FROM keys WHERE api_key = %s", (bayard_api_key,))
+    api_key_exists = cur.fetchone()
+    cur.close()
+    conn.close()
+
+    logging.info(f"API key exists in database: {api_key_exists}")
+    if not api_key_exists:
         return jsonify({'error': 'Invalid API key'}), 401
 
     # Check if the rate limit has been exceeded
@@ -283,6 +245,22 @@ def authenticate_request():
 
 # Dictionary to store API key usage
 api_key_usage = {}
+
+conversation_history_cache = {}
+
+
+def log_conversation_in_cache(user_id: str, input_text: str, model_output: str):
+    if user_id not in conversation_history_cache:
+        conversation_history_cache[user_id] = []
+    
+    # Append the new conversation to the user's history.
+    conversation_history_cache[user_id].append({
+        "input_text": input_text,
+        "model_output": model_output
+    })
+
+def get_conversation_history_from_cache(user_id: str):
+    return conversation_history_cache.get(user_id, [])
 
 # Rate limiting configuration
 RATE_LIMIT_QUERIES = 500

@@ -23,13 +23,12 @@ def log_conversation(input_text: str, model_output: str, response_quality_scores
                     overall_score
                 )
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
-            """, (
-                input_text,
-                model_output,
-                response_quality_scores.get('Relevance', None),
-                response_quality_scores.get('Coherence', None),
-                response_quality_scores.get('Informativeness', None),
-                response_quality_scores.get('Engagement', None),
-                response_quality_scores.get('Overall Score', None)
-            ))
+            """, (input_text,
+                    model_output,
+                    response_quality_scores.get('Relevance') if response_quality_scores else None,
+                    response_quality_scores.get('Coherence') if response_quality_scores else None,
+                    response_quality_scores.get('Informativeness') if response_quality_scores else None,
+                    response_quality_scores.get('Engagement') if response_quality_scores else None,
+                    response_quality_scores.get('Overall Score') if response_quality_scores else None
+                    ))
         conn.commit()

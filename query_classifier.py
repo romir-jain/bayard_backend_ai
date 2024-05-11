@@ -83,7 +83,6 @@ def classify_query(query):
 
     # Classify the input query
     response = co.classify(
-        model='medium',  # Choose the model size
         inputs=[query],
         examples=examples
     )
