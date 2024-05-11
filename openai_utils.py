@@ -75,20 +75,30 @@ def predict(input_text: str, filtered_docs: list, conversation_history: list, op
 
     if not filtered_docs:
         model_input += "No relevant documents found.\n"
+        
     else:
-        for i, doc in enumerate(filtered_docs[:max_hits]):
+        if isinstance(max_hits, list):
+            if len(max_hits) > 0 and isinstance(max_hits[0], (int, str)):
+                max_hits_int = int(max_hits[0])  # Convert the first element of max_hits list to an integer
+            else:
+                max_hits_int = 10  # Set a default value if max_hits is an empty list or contains non-integer/non-string values
+        else:
+            max_hits_int = int(max_hits)  # Convert max_hits to an integer
+        for i, doc in enumerate(filtered_docs):
+            if i >= max_hits_int:
+                break
             model_input += f"Document {i+1}:\n"
-            model_input += f"Title: {doc['title']}\n"
-            model_input += f"Authors: {', '.join(map(str, doc['authors']))}\n"
-            model_input += f"Content: {doc['abstract']}\n"
-            model_input += f"Classification: {doc['classification']}\n"
-            model_input += f"Concepts: {', '.join(map(str, doc['concepts']))}\n"
-            model_input += f"Emotion: {doc['emotion']}\n"
-            model_input += f"Year Published: {doc['yearPublished']}\n"
-            model_input += f"Download URL: {doc['downloadUrl']}\n"
-            model_input += f"Sentiment: {doc['sentiment']}\n"
-            model_input += f"Categories: {', '.join(map(str, doc['categories']))}\n"
-            model_input += f"ID: {doc['_id']}\n\n"
+            model_input += f"Title: {doc.get('title', 'N/A')}\n"
+            model_input += f"Authors: {', '.join(doc.get('authors', []))}\n"
+            model_input += f"Content: {doc.get('abstract', 'N/A')}\n"
+            model_input += f"Classification: {doc.get('classification', 'N/A')}\n"
+            model_input += f"Concepts: {', '.join(doc.get('concepts', []))}\n"
+            model_input += f"Emotion: {doc.get('emotion', 'N/A')}\n"
+            model_input += f"Year Published: {doc.get('yearPublished', 'N/A')}\n"
+            model_input += f"Download URL: {doc.get('downloadUrl', 'N/A')}\n"
+            model_input += f"Sentiment: {doc.get('sentiment', 'N/A')}\n"
+            model_input += f"Categories: {', '.join(doc.get('categories', []))}\n"
+            model_input += f"ID: {doc.get('_id', 'N/A')}\n\n"
 
     model_input += "Based on the user's query and the retrieved documents, provide a helpful response.\n\nResponse:"
 
@@ -112,11 +122,11 @@ def predict(input_text: str, filtered_docs: list, conversation_history: list, op
     return model_output
 
 # Generate model output
-def generate_model_output(input_text: str, filtered_docs: list, conversation_history: list, max_hits: int = 10, max_tokens: int = 3000) -> str:
+def generate_model_output(input_text: str, filtered_docs: list, max_hits: int = 10, max_tokens: int = 3000) -> str:
     model_output = predict(
         input_text,
         filtered_docs,
-        conversation_history,
+        conversation_history=[],
         openai_api_key=os.environ.get("OPENAI_API_KEY"),
         elasticsearch_url=os.environ.get("ES_URL"),
         elasticsearch_index="bayardcorpus",
@@ -234,8 +244,7 @@ def generate_conversation_response(input_text, conversation_history):
         {"role": "system", "content": system_instructions},
         *[{"role": "user", "content": f"User: {entry['input_text']}\nAssistant: {entry['model_output']}"} for entry in conversation_history],
         {"role": "user", "content": f"User: {input_text}"}
-    ]
-        
+    ]    
     response = openai.chat.completions.create(
         model=os.environ.get("OPENAI_MODEL_ID"),
         messages=messages,
