@@ -1,11 +1,15 @@
-import openai
+import cohere
 import os
 import re
+import openai
 
+def initialize_cohere():
+    cohere.api_key = os.environ.get("COHERE_API_KEY")
+    
 def initialize_openai():
     openai.api_key = os.environ.get("OPENAI_API_KEY")
 
-def predict(input_text: str, filtered_docs: list, openai_api_key: str, elasticsearch_url: str, elasticsearch_index: str, max_hits: int = 10, max_tokens: int = 3000) -> str:
+def predict(input_text: str, filtered_docs: list, openai_api_key: str, cohere_api_key: str, elasticsearch_url: str, elasticsearch_index: str, max_hits: int = 10, max_tokens: int = 2000, conversation_history: list = None) -> str:
     system_instructions = """
     Your name is Bayard, an advanced open-source retrieval-augmented generative AI assistant created to guide users through a comprehensive academic corpus covering a wide range of LGBTQ+ topics. Specifically, you are an alpha-stage version of Bayard, named Bayard_One. Your purpose is to offer insightful, nuanced, and well-informed responses to user queries by drawing upon the wealth of information contained within the corpus documents. You were given over 20,000 LGBTQ+ academic works to query. You were created by a team at Bayard Lab, a research non-profit focused on leveraging artificial intelligence (AI) for good. Users can learn more at https://bayardlab.org.
     <objective>Provide relevant, informative, and thought-provoking content that enhances users' understanding of LGBTQ+ issues, history, culture, and experiences.</objective>
@@ -57,11 +61,11 @@ def predict(input_text: str, filtered_docs: list, openai_api_key: str, elasticse
         
         
     </description>
-    <interactivity>
-    <description> Use [Document X] to reference documents in the Document Pane by using the format [Document X] where X is the document number. When done, this creates a link in the response that the user can click to bring emphasis to the referenced document in the Document Pane. </description>
-    </interactivity>
 </response_guidelines>
 
+<directive>
+You are to use the Markdown formatting language to format your responses.
+</directive>
 
 <communication_style>
     <directive>When communicating with users, DO NOT explicitly mention the documents themselves or draw attention to your artificial nature as an AI assistant. Instead, focus on providing a seamless, human-like interaction that prioritizes the user's learning and understanding.</directive>
@@ -73,32 +77,55 @@ def predict(input_text: str, filtered_docs: list, openai_api_key: str, elasticse
     model_input += "Retrieved Documents:\n"
     total_tokens = len(input_text.split())
 
-    if not filtered_docs:
+    if not filtered_docs or not isinstance(filtered_docs, list):
         model_input += "No relevant documents found.\n"
     else:
-        for i, doc in enumerate(filtered_docs[:max_hits]):
+        # Limit the number of retrieved documents
+        filtered_docs = filtered_docs[:max_hits]
+
+        for i, doc in enumerate(filtered_docs):
             model_input += f"Document {i+1}:\n"
-            model_input += f"Title: {doc['title']}\n"
-            model_input += f"Authors: {', '.join(map(str, doc['authors']))}\n"
-            model_input += f"Content: {doc['abstract']}\n"
-            model_input += f"Classification: {doc['classification']}\n"
-            model_input += f"Concepts: {', '.join(map(str, doc['concepts']))}\n"
-            model_input += f"Emotion: {doc['emotion']}\n"
-            model_input += f"Year Published: {doc['yearPublished']}\n"
-            model_input += f"Download URL: {doc['downloadUrl']}\n"
-            model_input += f"Sentiment: {doc['sentiment']}\n"
-            model_input += f"Categories: {', '.join(map(str, doc['categories']))}\n"
-            model_input += f"ID: {doc['_id']}\n\n"
+            model_input += f"Title: {doc.get('title', 'No title provided')}\n"
+            model_input += f"Authors: {', '.join(map(str, doc.get('authors', [])))}\n"
+            model_input += f"Content: {doc.get('abstract', 'No abstract provided')}\n"
+            model_input += f"Classification: {doc.get('classification', 'No classification provided')}\n"
+            model_input += f"Concepts: {', '.join(map(str, doc.get('concepts', [])))}\n"
+            model_input += f"Emotion: {doc.get('emotion', 'No emotion provided')}\n"
+            model_input += f"Year Published: {doc.get('yearPublished', 'No year published provided')}\n"
+            model_input += f"Download URL: {doc.get('downloadUrl', 'No download URL provided')}\n"
+            model_input += f"Sentiment: {doc.get('sentiment', 'No sentiment provided')}\n"
+            model_input += f"Categories: {', '.join(map(str, doc.get('categories', [])))}\n"
+            model_input += f"ID: {doc.get('_id', 'No ID provided')}\n\n"
+
+    # Truncate the conversation history
+    if conversation_history:
+        max_history_tokens = max_tokens - total_tokens - 1000  # Reserve tokens for the model output
+        truncated_history = []
+        history_tokens = 0
+
+        for message in reversed(conversation_history):
+            message_tokens = len(message['user_input'].split()) + len(message['model_output'].split())
+            if history_tokens + message_tokens <= max_history_tokens:
+                truncated_history.insert(0, message)
+                history_tokens += message_tokens
+            else:
+                break
+
+        model_input += "Conversation History:\n"
+        for message in truncated_history:
+            model_input += f"User: {message['user_input']}\n"
+            model_input += f"Assistant: {message['model_output']}\n\n"
 
     model_input += "Based on the user's query and the retrieved documents, provide a helpful response.\n\nResponse:"
 
     # Use OpenAI's GPT-4 model to generate a response
-    response = openai.chat.completions.create(
-        model=os.environ.get("OPENAI_MODEL_ID"),
-        messages=[
-            {"role": "system", "content": system_instructions},
-            {"role": "user", "content": model_input}
+    co = cohere.Client(os.environ.get("COHERE_API_KEY"))
+    response = co.chat(
+        chat_history=[
+            {"role": "system", "message": system_instructions},
+            {"role": "user", "message": model_input}
         ],
+        message="Based on the user's query and the retrieved documents, provide a helpful response.",
         max_tokens=max_tokens
     )
 
@@ -107,15 +134,16 @@ def predict(input_text: str, filtered_docs: list, openai_api_key: str, elasticse
     return model_output
 
 # Generate model output
-def generate_model_output(input_text: str, filtered_docs: list, max_hits: int = 10, max_tokens: int = 3000) -> str:
+def generate_model_output(input_text: str, filtered_docs: list, conversation_history: list, max_hits: int = 10, max_tokens: int = 3423) -> str:
     model_output = predict(
         input_text,
         filtered_docs,
-        openai_api_key=os.environ.get("OPENAI_API_KEY"),
+        cohere_api_key=os.environ.get("COHERE_API_KEY"),
         elasticsearch_url=os.environ.get("ES_URL"),
         elasticsearch_index="bayardcorpus",
         max_hits=max_hits,
-        max_tokens=max_tokens
+        max_tokens=max_tokens,
+        conversation_history=conversation_history
     )
     return model_output
 
@@ -179,10 +207,18 @@ def generate_search_quality_reflection(search_results: list, input_text: str) ->
     search_quality_prompt = f"User Query: {input_text}\n\n"
     search_quality_prompt += "Search Results:\n"
 
+    max_tokens = 3000
+    total_tokens = len(input_text.split())
+
     for i, doc in enumerate(search_results):
-        search_quality_prompt += f"Document {i+1}:\n"
-        search_quality_prompt += f"Title: {doc.get('title', 'No title provided')}\n"
-        search_quality_prompt += f"Abstract: {doc.get('abstract', 'No abstract provided')}\n\n"
+        doc_tokens = len(doc.get('title', '').split()) + len(doc.get('abstract', '').split())
+        if total_tokens + doc_tokens <= max_tokens:
+            search_quality_prompt += f"Document {i+1}:\n"
+            search_quality_prompt += f"Title: {doc.get('title', 'No title provided')}\n"
+            search_quality_prompt += f"Abstract: {doc.get('abstract', 'No abstract provided')}\n\n"
+            total_tokens += doc_tokens
+        else:
+            break
 
     search_quality_prompt += "Based on the user query and the provided search results, please provide a reflection on the quality and relevance of the search results. Also, assign a search quality score between 1 and 5, where 1 indicates poor quality and 5 indicates excellent quality.\n\nReflection:"
 
@@ -201,7 +237,7 @@ def generate_search_quality_reflection(search_results: list, input_text: str) ->
         "search_quality_score": score
     }
 
-def generate_conversation_response(input_text):
+def generate_conversation_response(input_text, conversation_history):
     system_instructions = """
     You are Bayard, an advanced open-source retrieval-augmented generative AI assistant created to guide users through a comprehensive academic corpus covering a wide range of LGBTQIA+ topics. Your purpose is to offer insightful, nuanced, and well-informed responses to user queries by drawing upon the wealth of information contained within the corpus documents.
 
@@ -224,17 +260,22 @@ def generate_conversation_response(input_text):
     Remember, while you can engage in general conversation, your primary purpose is to serve as a research assistant for LGBTQIA+ topics. By encouraging users to ask specific questions, you can better fulfill your role and provide the most valuable assistance.
     """
 
-    prompt = f"User: {input_text}\nBayard:"
-    response = openai.chat.completions.create(
-        model=os.environ.get("OPENAI_MODEL_ID"),
-        messages=[
-            {"role": "system", "content": system_instructions},
-            {"role": "user", "content": prompt}
+    co = cohere.Client(os.environ.get("COHERE_API_KEY"))
+
+    prompt = f"User: {input_text}\n"
+    if conversation_history:
+        for message in conversation_history:
+            prompt += f"User: {message['user_input']}\n"
+            prompt += f"Assistant: {message['model_output']}\n"
+    prompt += "Assistant:"
+
+    response = co.chat(
+        chat_history=[
+            {"role": "system", "message": system_instructions},
+            {"role": "user", "message": prompt}
         ],
-        max_tokens=3000,
-        n=1,
-        stop=None,
-        temperature=0.7,
+        message="Based on the user's query and the retrieved documents, provide a helpful response.",
+        max_tokens=3432
     )
     model_output = response.choices[0].message.content
     return model_output

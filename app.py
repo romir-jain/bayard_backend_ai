@@ -16,6 +16,8 @@ from openai_utils import initialize_openai, generate_model_output, generate_sear
 import weave
 from conversation_logger import log_conversation
 from response_quality_evaluator import evaluate_response_quality
+import redis
+import tiktoken
 
 
 # Configure logging
@@ -34,6 +36,10 @@ if not SUPABASE_URL or not SUPABASE_KEY:
     raise ValueError("SUPABASE_URL and SUPABASE_KEY environment variables are not set")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# Redis connection
+REDIS_URL = "redis://red-covbrn21hbls73dnusrg:6379"
+redis_client = redis.from_url(REDIS_URL)
 
 def create_table_if_not_exists():
     runs_table = """
@@ -105,6 +111,41 @@ def generate_api_key():
         logging.error(f"Failed to generate API key: {str(e)}")
         return jsonify({"error": "Failed to generate API key"}), 500
 
+def generate_session_id():
+    return str(uuid.uuid4())
+
+def store_conversation_history(session_id, user_input, model_output):
+    conversation_key = f"conversation_history:{session_id}"
+    conversation_data = {
+        "user_input": user_input,
+        "model_output": model_output
+    }
+    redis_client.rpush(conversation_key, json.dumps(conversation_data))
+
+def get_conversation_history(session_id):
+    conversation_key = f"conversation_history:{session_id}"
+    conversation_data = redis_client.lrange(conversation_key, 0, -1)
+    conversation_history = [json.loads(data) for data in conversation_data]
+    return conversation_history
+
+def truncate_conversation_history(conversation_history, max_tokens):
+    tokenizer = tiktoken.get_encoding("cl100k_base")
+    total_tokens = 0
+    truncated_history = []
+
+    for message in reversed(conversation_history):
+        user_input_tokens = len(tokenizer.encode(message["user_input"]))
+        model_output_tokens = len(tokenizer.encode(message["model_output"]))
+        message_tokens = user_input_tokens + model_output_tokens
+
+        if total_tokens + message_tokens <= max_tokens:
+            total_tokens += message_tokens
+            truncated_history.insert(0, message)
+        else:
+            break
+
+    return truncated_history
+
 @app.route("/api/bayard", methods=["POST"])
 @weave.op(
     input_type=weave.types.TypedDict({
@@ -125,6 +166,13 @@ def bayard_api():
     if not input_text:
         return jsonify({"error": "Input text is required"}), 400
 
+    session_id = request.headers.get('Session-ID')  # Assuming the session ID is sent in the request headers
+    if not session_id:
+        session_id = generate_session_id()
+
+    # Retrieve conversation history for the current session
+    conversation_history = get_conversation_history(session_id)
+
     query_type = classify_query(input_text)
 
     if query_type == "search":
@@ -136,7 +184,7 @@ def bayard_api():
         search_quality = generate_search_quality_reflection(search_results, input_text)
 
         # Generate the model output
-        model_output = generate_model_output(input_text, search_results)
+        model_output = generate_model_output(input_text, search_results, conversation_history)
         try:
             response_quality_scores = evaluate_response_quality(input_text, model_output)
         except Exception as e:
@@ -144,6 +192,8 @@ def bayard_api():
             response_quality_scores = None  # Default or fallback value if score evaluation fails
         log_conversation(input_text, model_output, response_quality_scores)
 
+        # Store the current input and output in the conversation history
+        store_conversation_history(session_id, input_text, model_output)
 
         response_data = {
             "run_id": run_id,
@@ -187,7 +237,11 @@ def bayard_api():
         return jsonify(response_data)
     else:
         # Handle conversation without searching
-        conversation_response = generate_conversation_response(input_text)
+        conversation_response = generate_conversation_response(input_text, conversation_history)
+        
+        # Store the current input and output in the conversation history
+        store_conversation_history(session_id, input_text, conversation_response)
+        
         return jsonify({"model_output": conversation_response})
 
 @app.before_request
