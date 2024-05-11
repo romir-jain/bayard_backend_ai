@@ -5,7 +5,7 @@ import re
 def initialize_openai():
     openai.api_key = os.environ.get("OPENAI_API_KEY")
 
-def predict(input_text: str, filtered_docs: list, openai_api_key: str, elasticsearch_url: str, elasticsearch_index: str, max_hits: int = 10, max_tokens: int = 3000) -> str:
+def predict(input_text: str, filtered_docs: list, conversation_history: list, openai_api_key: str, elasticsearch_url: str, elasticsearch_index: str, max_hits: int = 10, max_tokens: int = 3000) -> str:
     system_instructions = """
     Your name is Bayard, an advanced open-source retrieval-augmented generative AI assistant created to guide users through a comprehensive academic corpus covering a wide range of LGBTQ+ topics. Specifically, you are an alpha-stage version of Bayard, named Bayard_One. Your purpose is to offer insightful, nuanced, and well-informed responses to user queries by drawing upon the wealth of information contained within the corpus documents. You were given over 20,000 LGBTQ+ academic works to query. You were created by a team at Bayard Lab, a research non-profit focused on leveraging artificial intelligence (AI) for good. Users can learn more at https://bayardlab.org.
     <objective>Provide relevant, informative, and thought-provoking content that enhances users' understanding of LGBTQ+ issues, history, culture, and experiences.</objective>
@@ -93,24 +93,30 @@ def predict(input_text: str, filtered_docs: list, openai_api_key: str, elasticse
     model_input += "Based on the user's query and the retrieved documents, provide a helpful response.\n\nResponse:"
 
     # Use OpenAI's GPT-4 model to generate a response
+    
+    messages = [
+        {"role": "system", "content": system_instructions},
+        *[{"role": "user", "content": f"User: {entry['input_text']}\nAssistant: {entry['model_output']}"} for entry in conversation_history],
+        {"role": "user", "content": f"User: {input_text}"}
+    ]
+        
     response = openai.chat.completions.create(
         model=os.environ.get("OPENAI_MODEL_ID"),
-        messages=[
-            {"role": "system", "content": system_instructions},
-            {"role": "user", "content": model_input}
-        ],
-        max_tokens=max_tokens
+        messages=messages,
+        max_tokens=max_tokens,
+        n=1,
+        stop=None,
+        temperature=0.7,
     )
-
     model_output = response.choices[0].message.content
-
     return model_output
 
 # Generate model output
-def generate_model_output(input_text: str, filtered_docs: list, max_hits: int = 10, max_tokens: int = 3000) -> str:
+def generate_model_output(input_text: str, filtered_docs: list, conversation_history: list, max_hits: int = 10, max_tokens: int = 3000) -> str:
     model_output = predict(
         input_text,
         filtered_docs,
+        conversation_history,
         openai_api_key=os.environ.get("OPENAI_API_KEY"),
         elasticsearch_url=os.environ.get("ES_URL"),
         elasticsearch_index="bayardcorpus",
@@ -201,7 +207,7 @@ def generate_search_quality_reflection(search_results: list, input_text: str) ->
         "search_quality_score": score
     }
 
-def generate_conversation_response(input_text):
+def generate_conversation_response(input_text, conversation_history):
     system_instructions = """
     You are Bayard, an advanced open-source retrieval-augmented generative AI assistant created to guide users through a comprehensive academic corpus covering a wide range of LGBTQIA+ topics. Your purpose is to offer insightful, nuanced, and well-informed responses to user queries by drawing upon the wealth of information contained within the corpus documents.
 
@@ -224,13 +230,15 @@ def generate_conversation_response(input_text):
     Remember, while you can engage in general conversation, your primary purpose is to serve as a research assistant for LGBTQIA+ topics. By encouraging users to ask specific questions, you can better fulfill your role and provide the most valuable assistance.
     """
 
-    prompt = f"User: {input_text}\nBayard:"
+    messages = [
+        {"role": "system", "content": system_instructions},
+        *[{"role": "user", "content": f"User: {entry['input_text']}\nAssistant: {entry['model_output']}"} for entry in conversation_history],
+        {"role": "user", "content": f"User: {input_text}"}
+    ]
+        
     response = openai.chat.completions.create(
         model=os.environ.get("OPENAI_MODEL_ID"),
-        messages=[
-            {"role": "system", "content": system_instructions},
-            {"role": "user", "content": prompt}
-        ],
+        messages=messages,
         max_tokens=3000,
         n=1,
         stop=None,

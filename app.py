@@ -17,7 +17,10 @@ from openai_utils import initialize_openai, generate_model_output, generate_sear
 import weave
 from conversation_logger import log_conversation
 from response_quality_evaluator import evaluate_response_quality
+import redis
 
+redis_url = os.environ.get("REDIS_URL")
+redis_client = redis.from_url(redis_url)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -134,6 +137,11 @@ def bayard_api():
     if not input_text:
         return jsonify({"error": "Input text is required"}), 400
 
+    user_id = request.json.get("user_id")  # Assuming user_id is provided in the request
+
+    # Retrieve conversation history from Redis
+    conversation_history = get_conversation_history_from_cache(user_id)
+
     query_type = classify_query(input_text)
 
     if query_type == "search":
@@ -145,14 +153,13 @@ def bayard_api():
         search_quality = generate_search_quality_reflection(search_results, input_text)
 
         # Generate the model output
-        model_output = generate_model_output(input_text, search_results)
+        model_output = generate_model_output(input_text, search_results, conversation_history)        
         try:
             response_quality_scores = evaluate_response_quality(input_text, model_output)
         except Exception as e:
             logging.error(f"Failed to evaluate response quality: {str(e)}")
             response_quality_scores = None  # Default or fallback value if score evaluation fails
         log_conversation(input_text, model_output, response_quality_scores)
-
 
         response_data = {
             "run_id": run_id,
@@ -184,19 +191,23 @@ def bayard_api():
                 "run_id": run_id,
                 "timestamp": timestamp,
                 "input_text": input_text,
-                "model_output": model_output
+                "search_quality_reflection": search_quality,
+                "model_output": model_output,
+                "response_quality_scores": json.dumps(response_quality_scores)
             }).execute()
         except Exception as e:
-            logging.error(f"Error storing run in the database: {str(e)}")
-            logging.error(f"Run ID: {run_id}")
-            logging.error(f"Timestamp: {timestamp}")
-            logging.error(f"Input Text: {input_text}")
-            logging.error(f"Model Output: {model_output}")
+            logging.error(f"Failed to store run in the database: {str(e)}")
+
+        # Update conversation history in Redis
+        log_conversation_in_cache(user_id, input_text, model_output)
 
         return jsonify(response_data)
     else:
         # Handle conversation without searching
-        conversation_response = generate_conversation_response(input_text)
+        conversation_response = generate_conversation_response(input_text, conversation_history)        
+        # Update conversation history in Redis
+        log_conversation_in_cache(user_id, input_text, conversation_response)
+
         return jsonify({"model_output": conversation_response})
 
 @app.before_request
@@ -248,19 +259,29 @@ api_key_usage = {}
 
 conversation_history_cache = {}
 
-
 def log_conversation_in_cache(user_id: str, input_text: str, model_output: str):
-    if user_id not in conversation_history_cache:
-        conversation_history_cache[user_id] = []
-    
-    # Append the new conversation to the user's history.
-    conversation_history_cache[user_id].append({
+    # Retrieve the user's conversation history from Redis
+    conversation_history = redis_client.lrange(f"conversation_history:{user_id}", 0, -1)
+    conversation_history = [json.loads(entry) for entry in conversation_history]
+
+    # Append the new conversation to the user's history
+    conversation_history.append({
         "input_text": input_text,
         "model_output": model_output
     })
 
+    # Limit the conversation history to the last 3 entries
+    conversation_history = conversation_history[-3:]
+
+    # Store the updated conversation history in Redis
+    redis_client.delete(f"conversation_history:{user_id}")
+    for entry in conversation_history:
+        redis_client.rpush(f"conversation_history:{user_id}", json.dumps(entry))
+
 def get_conversation_history_from_cache(user_id: str):
-    return conversation_history_cache.get(user_id, [])
+    conversation_history = redis_client.lrange(f"conversation_history:{user_id}", 0, -1)
+    conversation_history = [json.loads(entry) for entry in conversation_history]
+    return conversation_history
 
 # Rate limiting configuration
 RATE_LIMIT_QUERIES = 500
