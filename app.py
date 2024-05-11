@@ -12,7 +12,7 @@ import json
 import secrets
 from supabase import create_client, Client
 from query_classifier import classify_query
-from openai_utils import initialize_openai, generate_model_output, generate_search_quality_reflection, generate_conversation_response
+from openai_utils import initialize_openai, initialize_cohere, generate_model_output, generate_search_quality_reflection, generate_conversation_response
 import weave
 from conversation_logger import log_conversation
 from response_quality_evaluator import evaluate_response_quality
@@ -81,6 +81,7 @@ def add_headers(response):
     return response
 
 initialize_openai()
+initialize_cohere()
 
 @app.route("/health-check", methods=["GET"])
 def health_check():
