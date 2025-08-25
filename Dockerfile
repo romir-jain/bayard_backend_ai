@@ -16,7 +16,7 @@ COPY . .
 # Expose the port on which the Flask app will run
 EXPOSE 10000
 
-RUN wandb login 1bdbac3dfcb8032804408d746c8bd5276db82e4e
+RUN wandb login SECURITY_KEY
 
 # Run the Flask application with Gunicorn
 CMD ["gunicorn", "app:app"]
